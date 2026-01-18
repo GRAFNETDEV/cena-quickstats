@@ -6,8 +6,7 @@ use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ExportController;
 use App\Http\Controllers\ResultatsController;
-
-
+use App\Http\Controllers\ParametresController;
 
 Route::get('/', function () {
     return redirect()->route('login');
@@ -64,11 +63,27 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/export/arrondissement/csv', [ExportController::class, 'arrondissementCsv'])
         ->name('export.arrondissement.csv');
 
-    // Export Village
+    // Export Village (ancienne route conservée pour compatibilité)
     Route::get('/export/village/csv', [ExportController::class, 'villageCsv'])
         ->name('export.village.csv');
     Route::get('/export/village/postes/csv', [ExportController::class, 'villagePostesCsv'])
         ->name('export.village.postes.csv');
+
+    // ==========================================
+    // NOUVEAUX EXPORTS VILLAGES (Vue Globale)
+    // ==========================================
+
+    // Export des villages saisis avec résultats
+    Route::get('/export/village/saisis/csv', [ExportController::class, 'villageSaisisCsv'])
+        ->name('export.village.saisis.csv');
+
+    // Export des villages non saisis
+    Route::get('/export/village/non-saisis/csv', [ExportController::class, 'villageNonSaisisCsv'])
+        ->name('export.village.non-saisis.csv');
+
+    // ==========================================
+    // ROUTES RÉSULTATS (Législatives)
+    // ==========================================
 
     // Page principale des résultats
     Route::get('/resultats', [ResultatsController::class, 'index'])
@@ -82,9 +97,13 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/resultats/compiler', [ResultatsController::class, 'compiler'])
         ->name('resultats.compiler');
     
-    // Export CSV de la matrice des résultats
-    Route::get('/resultats/export/csv', [ResultatsController::class, 'exportCsv'])
-        ->name('resultats.export.csv');
+    // Export CSV de la matrice complète
+    Route::get('/resultats/export/matrice-csv', [ResultatsController::class, 'exportMatriceCSV'])
+        ->name('resultats.export.matrice.csv');
+    
+    // Export CSV des détails par circonscription
+    Route::get('/resultats/export/details-csv', [ResultatsController::class, 'exportDetailsCSV'])
+        ->name('resultats.export.details.csv');
     
     // Export CSV des sièges
     Route::get('/resultats/export/sieges-csv', [ResultatsController::class, 'exportSiegesCsv'])
@@ -101,6 +120,41 @@ Route::middleware(['auth'])->group(function () {
     // Détails par circonscription
     Route::get('/resultats/circonscription/{id}', [ResultatsController::class, 'detailsCirconscription'])
         ->name('resultats.circonscription');
+
+    // ==========================================
+    // EXPORTS COMMUNALES
+    // ==========================================
+
+    // Export matrice communales
+    Route::get('/export/communales/matrice', [ExportController::class, 'communalesMatriceCsv'])
+        ->name('export.communales.matrice');
+
+    // Export sièges communales
+    Route::get('/export/communales/sieges', [ExportController::class, 'communalesSiegesCsv'])
+        ->name('export.communales.sieges');
+
+    // Export détails communes
+    Route::get('/export/communales/details', [ExportController::class, 'communalesDetailsCsv'])
+        ->name('export.communales.details');
+
+    // Export détails arrondissements
+    Route::get('/export/communales/arrondissements', [ExportController::class, 'communalesArrondissementsCsv'])
+        ->name('export.communales.arrondissements');
+
+    // Export complet ZIP
+    Route::get('/export/communales/complet', [ExportController::class, 'communalesExportComplet'])
+        ->name('export.communales.complet');
+
+        Route::get('/parametres', [ParametresController::class, 'index'])
+    ->name('parametres.index');
+Route::get('/parametres/top-utilisateurs', [ParametresController::class, 'topUtilisateurs']);
+Route::get('/parametres/rechercher-pv', [ParametresController::class, 'rechercherPv']);
+Route::get('/parametres/pv/{id}', [ParametresController::class, 'detailsPv']);
+Route::post('/parametres/pv/{id}/annuler', [ParametresController::class, 'annulerPv']);
+Route::delete('/parametres/pv/{id}/supprimer', [ParametresController::class, 'supprimerPv']);
+Route::get('/parametres/utilisateurs', [ParametresController::class, 'utilisateurs']);
+
+
 });
 
 require __DIR__.'/auth.php';

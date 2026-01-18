@@ -35,33 +35,32 @@
         </div>
     </div>
 
-    <!-- Légende -->
+    <!-- Info Seuils -->
     <div class="bg-white rounded-xl shadow-sm p-4">
         <div class="flex items-center justify-between">
-            <h3 class="text-sm font-semibold text-gray-700">Seuils d'éligibilité</h3>
+            <div>
+                <h3 class="text-sm font-semibold text-gray-700">Seuil d'éligibilité national</h3>
+                <p class="text-xs text-gray-600 mt-1">Seuls les partis ayant obtenu ≥ 10% des suffrages au plan national participent à l'attribution des sièges</p>
+            </div>
             <div class="flex items-center gap-4 text-sm">
                 <div class="flex items-center gap-2">
                     <div class="w-4 h-4 rounded bg-red-500"></div>
                     <span>< 10%</span>
                 </div>
                 <div class="flex items-center gap-2">
-                    <div class="w-4 h-4 rounded bg-yellow-500"></div>
-                    <span>10% - 19.99%</span>
-                </div>
-                <div class="flex items-center gap-2">
                     <div class="w-4 h-4 rounded bg-green-500"></div>
-                    <span>≥ 20% (Éligible)</span>
+                    <span>≥ 10% (Éligible)</span>
                 </div>
             </div>
         </div>
     </div>
 
-    {{-- Étape 0 : Matrice des résultats --}}
+    {{-- Matrice des résultats par commune --}}
     <div class="bg-white rounded-xl shadow-sm overflow-hidden">
         <div class="p-6 border-b border-gray-200 flex items-center justify-between">
             <div>
-                <h3 class="text-lg font-semibold text-gray-900">📊 Matrice des Résultats par Circonscription</h3>
-                <p class="text-sm text-gray-600 mt-1">Voix et pourcentages par circonscription et par entité politique (24 circonscriptions, Diaspora exclue)</p>
+                <h3 class="text-lg font-semibold text-gray-900">📊 Matrice des Résultats par Commune</h3>
+                <p class="text-sm text-gray-600 mt-1">Voix et pourcentages par commune et par entité politique</p>
             </div>
             <a href="{{ route('resultats.export.matrice.csv', ['election_id' => $election->id]) }}" 
                class="px-4 py-2 bg-benin-green-600 text-white rounded-lg hover:bg-benin-green-700 inline-flex items-center gap-2">
@@ -70,12 +69,15 @@
             </a>
         </div>
 
-        <div class="overflow-x-auto">
+        <div class="overflow-x-auto" style="max-height: 600px;">
             <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50 sticky top-0">
+                <thead class="bg-gray-50 sticky top-0 z-10">
                     <tr>
-                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase sticky left-0 bg-gray-50 z-10">
-                            Circonscription
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase sticky left-0 bg-gray-50 z-20">
+                            Commune
+                        </th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase bg-gray-50">
+                            Sièges
                         </th>
                         @foreach($data['entites'] as $entite)
                             <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
@@ -88,59 +90,48 @@
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
-                    @foreach($data['circonscriptions'] as $circ)
+                    @foreach($data['communes'] as $commune)
                         <tr class="hover:bg-gray-50">
-                            <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900 sticky left-0 bg-white">
-                                <div>
-                                    @if($circ->numero == 1)
-                                        1ère circonscription
-                                    @else
-                                        {{ $circ->numero }}ème circonscription
-                                    @endif
-                                </div>
-                                <div class="text-xs text-gray-500">{{ $circ->nombre_sieges_total }} sièges ({{ $circ->nombre_sieges_femmes }} F)</div>
+                            <td class="px-4 py-3 whitespace-nowrap sticky left-0 bg-white">
+                                <div class="text-sm font-medium text-gray-900">{{ $commune->nom }}</div>
+                                <div class="text-xs text-gray-500">{{ $commune->departement_nom }}</div>
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">
+                                    {{ $data['matrice'][$commune->id]['nombre_sieges'] }}
+                                </span>
                             </td>
                             @foreach($data['entites'] as $entite)
                                 @php
-                                    $result = $data['matrice'][$circ->id]['resultats'][$entite->id] ?? ['voix' => 0, 'pourcentage' => 0];
+                                    $result = $data['matrice'][$commune->id]['resultats'][$entite->id] ?? ['voix' => 0, 'pourcentage' => 0];
                                     $voix = $result['voix'];
                                     $pct = $result['pourcentage'];
-                                    
-                                    if ($pct >= 20) {
-                                        $bgColor = 'bg-green-100 text-green-800';
-                                        $borderColor = 'border-green-500';
-                                    } elseif ($pct >= 10) {
-                                        $bgColor = 'bg-yellow-100 text-yellow-800';
-                                        $borderColor = 'border-yellow-500';
-                                    } else {
-                                        $bgColor = 'bg-red-100 text-red-800';
-                                        $borderColor = 'border-red-500';
-                                    }
                                 @endphp
                                 <td class="px-4 py-3 text-center">
-                                    <div class="inline-block px-3 py-2 rounded-lg border-2 {{ $bgColor }} {{ $borderColor }}">
-                                        <div class="font-bold text-sm">{{ number_format($voix) }}</div>
-                                        <div class="text-xs">({{ number_format($pct, 2) }}%)</div>
+                                    <div class="inline-block px-3 py-2 rounded-lg">
+                                        <div class="font-bold text-sm text-gray-900">{{ number_format($voix) }}</div>
+                                        <div class="text-xs text-gray-600">({{ number_format($pct, 2) }}%)</div>
                                     </div>
                                 </td>
                             @endforeach
                             <td class="px-4 py-3 text-right font-semibold text-gray-900 bg-gray-50">
-                                {{ number_format($data['matrice'][$circ->id]['total_voix']) }}
+                                {{ number_format($data['matrice'][$commune->id]['total_voix']) }}
                             </td>
                         </tr>
                     @endforeach
                 </tbody>
-                <tfoot class="bg-gray-100 font-bold">
+                <tfoot class="bg-gray-100 font-bold sticky bottom-0">
                     <tr>
-                        <td class="px-4 py-3 text-sm text-gray-900">TOTAL NATIONAL</td>
+                        <td class="px-4 py-3 text-sm text-gray-900 sticky left-0 bg-gray-100">TOTAL NATIONAL</td>
+                        <td class="px-4 py-3 text-center text-sm"></td>
                         @foreach($data['entites'] as $entite)
                             @php
                                 $totalVoix = $data['totaux_par_entite'][$entite->id]['voix'];
-                                $pctMoyen = $data['totaux_par_entite'][$entite->id]['pourcentage_moyen'];
+                                $pctNational = $data['totaux_par_entite'][$entite->id]['pourcentage_national'];
                             @endphp
                             <td class="px-4 py-3 text-center text-sm">
                                 <div>{{ number_format($totalVoix) }}</div>
-                                <div class="text-xs text-gray-600">({{ number_format($pctMoyen, 2) }}%)</div>
+                                <div class="text-xs text-gray-600">({{ number_format($pctNational, 2) }}%)</div>
                             </td>
                         @endforeach
                         <td class="px-4 py-3 text-right text-sm bg-gray-200">
@@ -193,14 +184,14 @@
 
     {{-- Résultats de la compilation --}}
     @if($compilation)
-        {{-- ÉTAPE 1 : Éligibilité --}}
+        {{-- ÉTAPE 1 : Éligibilité Nationale --}}
         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
             <div class="p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
                 <h3 class="text-xl font-bold text-gray-900">
                     <i class="fas fa-check-circle text-blue-600 mr-2"></i>
-                    ÉTAPE 1 : Vérification d'Éligibilité
+                    Seuil d'éligibilité
                 </h3>
-                <p class="text-sm text-gray-600 mt-1">Seuil : ≥ 20% dans les 24 circonscriptions (Diaspora exclue)</p>
+                <p class="text-sm text-gray-600 mt-1">Seuil : ≥ 10% des suffrages exprimés au plan national</p>
             </div>
 
             <div class="p-6">
@@ -228,48 +219,32 @@
                             <div class="mt-4 space-y-2">
                                 <div class="flex justify-between text-sm">
                                     <span class="text-gray-600">Pourcentage national</span>
-                                    <span class="font-semibold">{{ number_format($elig['pourcentage_national'], 2) }}%</span>
+                                    <span class="font-semibold {{ $elig['eligible'] ? 'text-green-600' : 'text-red-600' }}">
+                                        {{ number_format($elig['pourcentage_national'], 2) }}%
+                                    </span>
                                 </div>
                                 <div class="flex justify-between text-sm">
                                     <span class="text-gray-600">Total voix</span>
                                     <span class="font-semibold">{{ number_format($elig['total_voix']) }}</span>
                                 </div>
-                                <div class="flex justify-between text-sm">
-                                    <span class="text-gray-600">Circonscriptions qualifiées</span>
-                                    <span class="font-semibold {{ $elig['nb_circonscriptions_qualifiees'] == 24 ? 'text-green-600' : 'text-red-600' }}">
-                                        {{ $elig['nb_circonscriptions_qualifiees'] }} / 24
-                                    </span>
-                                </div>
                             </div>
-
-                            @if(!$elig['eligible'])
-                                <div class="mt-3 pt-3 border-t border-red-200">
-                                    <p class="text-xs text-red-700 font-medium">Circonscriptions non qualifiées :</p>
-                                    <p class="text-xs text-red-600 mt-1">
-                                        {{ implode(', ', array_slice($elig['circonscriptions_non_qualifiees'], 0, 3)) }}
-                                        @if(count($elig['circonscriptions_non_qualifiees']) > 3)
-                                            et {{ count($elig['circonscriptions_non_qualifiees']) - 3 }} autres...
-                                        @endif
-                                    </p>
-                                </div>
-                            @endif
                         </div>
                     @endforeach
                 </div>
             </div>
         </div>
 
-        {{-- ÉTAPE 2 & 3 : Répartition des Sièges --}}
+        {{-- Répartition des Sièges --}}
         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
             <div class="p-6 border-b border-gray-200 bg-gradient-to-r from-purple-50 to-pink-50">
                 <h3 class="text-xl font-bold text-gray-900">
                     <i class="fas fa-chair text-purple-600 mr-2"></i>
-                    ÉTAPES 2 & 3 : Répartition des Sièges
+                    Répartition des Sièges par Commune
                 </h3>
-                <p class="text-sm text-gray-600 mt-1">Étape 2 : Sièges ordinaires (Quotient) • Étape 3 : Sièges femmes (Winner Takes All)</p>
+                <p class="text-sm text-gray-600 mt-1">Quotient Électoral • Attribution au quotient • Plus fort reste</p>
             </div>
 
-            {{-- Tableau récapitulatif --}}
+            {{-- Récapitulatif national --}}
             <div class="p-6 border-b border-gray-200">
                 <h4 class="font-bold text-lg text-gray-900 mb-4">📊 Récapitulatif National</h4>
                 <div class="overflow-x-auto">
@@ -277,38 +252,29 @@
                         <thead class="bg-gray-50">
                             <tr>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Entité Politique</th>
-                                <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Sièges Ordinaires</th>
-                                <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Sièges Femmes</th>
                                 <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase bg-benin-green-50">Total Sièges</th>
+                                <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">% National</th>
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-200">
-                            @php
-                                $totalOrdinaires = 0;
-                                $totalFemmes = 0;
-                                $totalGeneral = 0;
-                            @endphp
+                            @php $totalGeneral = 0; @endphp
                             @foreach($compilation['sieges_totaux'] as $entiteId => $sieges)
-                                @if($sieges['total_sieges'] > 0)
+                                @if($sieges['sieges_total'] > 0)
                                     @php
                                         $entite = collect($compilation['data']['entites'])->firstWhere('id', $entiteId);
-                                        $totalOrdinaires += $sieges['sieges_ordinaires'];
-                                        $totalFemmes += $sieges['sieges_femmes'];
-                                        $totalGeneral += $sieges['total_sieges'];
+                                        $totalGeneral += $sieges['sieges_total'];
+                                        $pctNational = $compilation['data']['totaux_par_entite'][$entiteId]['pourcentage_national'];
                                     @endphp
                                     <tr class="hover:bg-gray-50">
                                         <td class="px-6 py-4 font-medium text-gray-900">
                                             {{ $entite->nom }}
                                             <span class="text-sm text-gray-500">({{ $entite->sigle }})</span>
                                         </td>
-                                        <td class="px-6 py-4 text-center font-semibold text-blue-600">
-                                            {{ $sieges['sieges_ordinaires'] }}
+                                        <td class="px-6 py-4 text-center text-2xl font-bold text-benin-green-600 bg-benin-green-50">
+                                            {{ $sieges['sieges_total'] }}
                                         </td>
-                                        <td class="px-6 py-4 text-center font-semibold text-pink-600">
-                                            {{ $sieges['sieges_femmes'] }}
-                                        </td>
-                                        <td class="px-6 py-4 text-center text-xl font-bold text-benin-green-600 bg-benin-green-50">
-                                            {{ $sieges['total_sieges'] }}
+                                        <td class="px-6 py-4 text-center font-semibold text-gray-700">
+                                            {{ number_format($pctNational, 2) }}%
                                         </td>
                                     </tr>
                                 @endif
@@ -317,9 +283,8 @@
                         <tfoot class="bg-gray-100 font-bold">
                             <tr>
                                 <td class="px-6 py-4 text-gray-900">TOTAL</td>
-                                <td class="px-6 py-4 text-center text-blue-600">{{ $totalOrdinaires }}</td>
-                                <td class="px-6 py-4 text-center text-pink-600">{{ $totalFemmes }}</td>
-                                <td class="px-6 py-4 text-center text-xl text-benin-green-600 bg-benin-green-100">{{ $totalGeneral }}</td>
+                                <td class="px-6 py-4 text-center text-2xl text-benin-green-600 bg-benin-green-100">{{ $totalGeneral }}</td>
+                                <td class="px-6 py-4 text-center">100.00%</td>
                             </tr>
                         </tfoot>
                     </table>
@@ -334,73 +299,48 @@
                 </div>
             </div>
 
-            {{-- Détails par circonscription --}}
+            {{-- Détails par commune (échantillon des 10 premières) --}}
             <div class="p-6">
                 <div class="flex items-center justify-between mb-4">
-                    <h4 class="font-bold text-lg text-gray-900">🗺️ Détails par Circonscription</h4>
+                    <h4 class="font-bold text-lg text-gray-900">🏘️ Détails par Commune (extrait)</h4>
                     <a href="{{ route('resultats.export.details.csv', ['election_id' => $election->id]) }}" 
                        class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 inline-flex items-center gap-2">
                         <i class="fas fa-file-csv"></i>
-                        <span>Exporter CSV</span>
+                        <span>Export Complet CSV</span>
                     </a>
                 </div>
                 
-                <div class="space-y-4">
-                    @foreach($compilation['repartition'] as $circId => $rep)
-                        <div class="border rounded-lg p-4 bg-gray-50">
-                            <div class="flex items-center justify-between mb-3">
-                                <h5 class="font-bold text-gray-900">
-                                    @if($rep['info']->numero == 1)
-                                        1ère circonscription
-                                    @else
-                                        {{ $rep['info']->numero }}ème circonscription
-                                    @endif
-                                </h5>
-                                <span class="text-sm text-gray-600">
-                                    {{ $rep['info']->nombre_sieges_total }} sièges 
-                                    ({{ $rep['info']->nombre_sieges_total - $rep['info']->nombre_sieges_femmes }} ordinaires + {{ $rep['info']->nombre_sieges_femmes }} femme)
-                                </span>
+                <div class="text-sm text-gray-600 mb-4">
+                    <i class="fas fa-info-circle text-blue-500"></i>
+                    Affichage des 10 premières communes. Utilisez l'export CSV pour voir toutes les communes.
+                </div>
+
+                <div class="space-y-3">
+                    @foreach(array_slice($compilation['repartition'], 0, 10, true) as $communeId => $rep)
+                        @if($rep['nombre_sieges'] > 0)
+                        <div class="border rounded-lg p-3 bg-gray-50">
+                            <div class="flex items-center justify-between mb-2">
+                                <div>
+                                    <span class="font-semibold text-gray-900">{{ $rep['info']->nom }}</span>
+                                    <span class="text-sm text-gray-600 ml-2">• {{ $rep['nombre_sieges'] }} sièges</span>
+                                </div>
                             </div>
 
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                {{-- Sièges ordinaires --}}
-                                <div class="bg-white rounded-lg p-3 border">
-                                    <h6 class="text-sm font-semibold text-blue-600 mb-2">Sièges Ordinaires (Quotient)</h6>
-                                    <div class="text-xs text-gray-600 mb-2">QE = {{ number_format($rep['quotient_electoral'], 2) }}</div>
-                                    <div class="space-y-1">
-                                        @foreach($rep['sieges_ordinaires'] as $entiteId => $nbSieges)
-                                            @if($nbSieges > 0)
-                                                @php
-                                                    $entite = collect($compilation['data']['entites'])->firstWhere('id', $entiteId);
-                                                @endphp
-                                                <div class="flex justify-between text-sm">
-                                                    <span>{{ $entite->sigle ?: $entite->nom }}</span>
-                                                    <span class="font-semibold">{{ $nbSieges }}</span>
-                                                </div>
-                                            @endif
-                                        @endforeach
-                                    </div>
-                                </div>
-
-                                {{-- Siège femme --}}
-                                <div class="bg-white rounded-lg p-3 border">
-                                    <h6 class="text-sm font-semibold text-pink-600 mb-2">Siège Femme (Winner Takes All)</h6>
-                                    @if($rep['siege_femme'])
-                                        <div class="flex items-center justify-between">
-                                            <span class="font-medium">{{ $rep['siege_femme']['entite_nom'] }}</span>
-                                            <span class="px-2 py-1 bg-pink-100 text-pink-800 rounded-full text-xs font-semibold">
-                                                1 siège
-                                            </span>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                                @foreach($rep['details'] as $entiteId => $detail)
+                                    @if($detail['sieges_total'] > 0)
+                                        @php
+                                            $entite = collect($compilation['data']['entites'])->firstWhere('id', $entiteId);
+                                        @endphp
+                                        <div class="bg-white rounded p-2 border">
+                                            <div class="font-semibold text-gray-900">{{ $entite->sigle }}</div>
+                                            <div class="text-benin-green-600 font-bold">{{ $detail['sieges_total'] }} siège(s)</div>
                                         </div>
-                                        <div class="text-xs text-gray-600 mt-1">
-                                            {{ number_format($rep['siege_femme']['voix']) }} voix
-                                        </div>
-                                    @else
-                                        <p class="text-sm text-gray-500">Aucun siège femme pour cette circonscription</p>
                                     @endif
-                                </div>
+                                @endforeach
                             </div>
                         </div>
+                        @endif
                     @endforeach
                 </div>
             </div>
@@ -413,30 +353,11 @@
 function resultatsApp() {
     return {
         isCompiling: false,
-        countdown: 20,
-        timer: null,
-
-        exporterCSV() {
-            window.location.href = '{{ route("resultats.export.csv", ["election_id" => $election->id]) }}';
-        },
 
         lancerCompilation() {
             if (this.isCompiling) return;
-
             this.isCompiling = true;
-            this.countdown = 20;
-
-            if (this.timer) clearInterval(this.timer);
-
-            this.timer = setInterval(() => {
-                this.countdown--;
-
-                if (this.countdown <= 0) {
-                    clearInterval(this.timer);
-                    this.timer = null;
-                    this.$refs.compileForm.submit();
-                }
-            }, 1000);
+            this.$refs.compileForm.submit();
         }
     }
 }

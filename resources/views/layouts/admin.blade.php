@@ -184,11 +184,11 @@
                 </a>
                 
                 <!-- Paramètres -->
-                <a href="#" 
-                   class="menu-item flex items-center space-x-3 px-4 py-3 rounded-lg">
-                    <i class="fas fa-cog w-5"></i>
-                    <span>Paramètres</span>
-                </a>
+                <a href="{{ route('parametres.index') }}" 
+   class="menu-item flex items-center space-x-3 px-4 py-3 rounded-lg {{ request()->is('parametres*') ? 'active' : '' }}">
+    <i class="fas fa-cog w-5"></i>
+    <span>Paramètres</span>
+</a>
                 
             </nav>
             
@@ -321,6 +321,9 @@
         </div>
         @endif
     </div>
+
+        <!-- Modales Personnalisées (Juste avant @stack('scripts')) -->
+@include('components.modals')
     
     @stack('scripts')
     

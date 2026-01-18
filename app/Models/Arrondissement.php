@@ -30,6 +30,8 @@ class Arrondissement extends Model
         'nom',
         'commune_id',
         'circonscription_id',
+        'population',
+        'siege',
     ];
 
     /**

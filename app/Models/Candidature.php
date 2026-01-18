@@ -18,6 +18,7 @@ class Candidature extends Model
         'statut',
         'motif_rejet',
         'data',
+        'arrondissement_id',
     ];
 
     protected $casts = [

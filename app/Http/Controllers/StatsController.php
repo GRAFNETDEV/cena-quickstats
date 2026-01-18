@@ -98,7 +98,13 @@ class StatsController extends Controller
         $election = $this->electionActive();
         abort_if(!$election, 404, "Aucune élection trouvée");
 
-        $departements = DB::table('departements')->select('id', 'nom', 'code')->orderBy('nom')->get();
+        // ✅ Exclure le département Diaspora (id = 13)
+        $departements = DB::table('departements')
+            ->select('id', 'nom', 'code')
+            ->where('id', '<>', 13) // Exclure Diaspora
+            ->orderBy('nom')
+            ->get();
+            
         $departementId = (int) ($request->get('departement_id') ?: ($departements->first()->id ?? 0));
 
         if ($departementId) {
@@ -137,7 +143,7 @@ class StatsController extends Controller
         $election = $this->electionActive();
         abort_if(!$election, 404, "Aucune élection trouvée");
 
-        $circonscriptions = DB::table('circonscriptions_electorales')->select('id', 'nom', 'numero as numero_ordre')->orderBy('nom')->get();
+        $circonscriptions = DB::table('circonscriptions_electorales')->select('id', 'nom', 'numero as numero_ordre')->where('numero', '<=', 24)->orderBy('nom')->get();
         $circonscriptionId = (int) ($request->get('circonscription_id') ?: ($circonscriptions->first()->id ?? 0));
 
         if ($circonscriptionId) {
@@ -223,6 +229,7 @@ class StatsController extends Controller
 
         return view('stats.arrondissement', [
             'election' => $election,
+            'arrondissementId' => $arrondissementId,
             'stats' => [
                 'election' => $election,
                 'totaux' => $data['totaux'],
@@ -233,6 +240,9 @@ class StatsController extends Controller
         ]);
     }
 
+    /**
+     * ✅ NOUVELLE VUE VILLAGE : Statistiques globales + liste complète des villages
+     */
     public function village(Request $request)
     {
         // ✅ Accepter election_id en paramètre GET
@@ -244,57 +254,279 @@ class StatsController extends Controller
         $election = $this->electionActive();
         abort_if(!$election, 404, "Aucune élection trouvée");
 
-        $villages = DB::table('villages_quartiers')->select('id', 'nom')->orderBy('nom')->get();
-        $villageId = (int) ($request->get('village_id') ?: ($villages->first()->id ?? 0));
+        // ========================================
+        // STATISTIQUES GLOBALES
+        // ========================================
+        
+        // 1️⃣ Nombre de villages inscrits (hors diaspora)
+        $nombreVillagesInscrits = DB::table('villages_quartiers as vq')
+            ->join('arrondissements as a', 'a.id', '=', 'vq.arrondissement_id')
+            ->join('communes as com', 'com.id', '=', 'a.commune_id')
+            ->join('departements as dep', 'dep.id', '=', 'com.departement_id')
+            ->where('dep.nom', 'NOT ILIKE', '%diaspora%')
+            ->where('com.nom', 'NOT ILIKE', '%diaspora%')
+            ->where('a.nom', 'NOT ILIKE', '%diaspora%')
+            ->where('vq.nom', 'NOT ILIKE', '%diaspora%')
+            ->count();
 
-        if ($villageId) {
-            $data = $this->stats->village($election->id, $villageId);
-        } else {
-            $data = ['totaux' => [], 'postes' => []];
-        }
+        // 2️⃣ Nombre de villages saisis dans les PV (même logique que le listing)
+        $nombreVillagesSaisis = DB::select("
+            WITH lignes_avec_pv AS (
+                SELECT
+                    pv.niveau_id::int AS arrondissement_id,
+                    pv.id AS proces_verbal_id,
+                    pv.created_at AS pv_created_at,
+                    pl.id AS pv_ligne_id,
+                    pl.village_quartier_id,
+                    pl.created_at AS ligne_created_at
+                FROM public.proces_verbaux pv
+                JOIN public.pv_lignes pl ON pl.proces_verbal_id = pv.id
+                WHERE pv.niveau = 'arrondissement'
+                    AND pv.statut IN ('valide','publie')
+                    AND pv.election_id = ?
+                    AND pl.village_quartier_id IS NOT NULL
+            ),
+            dedup_lignes AS (
+                SELECT
+                    l.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY l.arrondissement_id, l.village_quartier_id
+                        ORDER BY l.pv_created_at DESC, l.ligne_created_at DESC, l.pv_ligne_id DESC
+                    ) AS rn
+                FROM lignes_avec_pv l
+            ),
+            lignes_retenues AS (
+                SELECT * FROM dedup_lignes WHERE rn = 1
+            )
+            SELECT COUNT(DISTINCT village_quartier_id) as total
+            FROM lignes_retenues
+        ", [$election->id]);
 
-        // Calculer les stats par poste
-        $parPosteVote = [];
-        foreach (($data['postes'] ?? []) as $p) {
-            $taux = ($p['electeurs_inscrits'] ?? 0) > 0
-                ? round((($p['votants'] ?? 0) / $p['electeurs_inscrits']) * 100, 2)
-                : 0;
+        $nombreVillagesSaisis = $nombreVillagesSaisis[0]->total ?? 0;
 
-            $parPosteVote[] = [
-                'id' => $p['id'] ?? 0,
-                'centre_vote_nom' => $p['centre_nom'] ?? '-',
-                'poste_vote_nom' => $p['nom'] ?? '-',
-                'numero' => $p['numero'] ?? '-',
-                'inscrits' => $p['electeurs_inscrits'] ?? 0,
-                'votants' => $p['votants'] ?? 0,
-                'suffrages' => $p['suffrages'] ?? 0,
-                'taux_participation' => $taux,
-            ];
-        }
+        // ========================================
+        // LISTE COMPLÈTE DES VILLAGES AVEC VOIX
+        // ========================================
+        
+        $villagesAvecVoix = DB::select("
+            WITH lignes_avec_pv AS (
+                SELECT
+                    pv.niveau_id::int AS arrondissement_id,
+                    pv.id AS proces_verbal_id,
+                    pv.created_at AS pv_created_at,
+                    pl.id AS pv_ligne_id,
+                    pl.village_quartier_id,
+                    pl.created_at AS ligne_created_at,
+                    COALESCE(pl.bulletins_nuls,0) AS bulletins_nuls
+                FROM public.proces_verbaux pv
+                JOIN public.pv_lignes pl ON pl.proces_verbal_id = pv.id
+                WHERE pv.niveau = 'arrondissement'
+                    AND pv.statut IN ('valide','publie')
+                    AND pv.election_id = ?
+                    AND pl.village_quartier_id IS NOT NULL
+            ),
+            dedup_lignes AS (
+                SELECT
+                    l.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY l.arrondissement_id, l.village_quartier_id
+                        ORDER BY l.pv_created_at DESC, l.ligne_created_at DESC, l.pv_ligne_id DESC
+                    ) AS rn
+                FROM lignes_avec_pv l
+            ),
+            lignes_retenues AS (
+                SELECT * FROM dedup_lignes WHERE rn = 1
+            ),
+            voix_par_entite AS (
+                SELECT
+                    dep.id AS departement_id,
+                    dep.nom AS departement_nom,
+                    com.id AS commune_id,
+                    com.nom AS commune_nom,
+                    ce.id AS circonscription_id,
+                    ce.nom AS circonscription_nom,
+                    a.id AS arrondissement_id,
+                    a.nom AS arrondissement_nom,
+                    vq.id AS village_quartier_id,
+                    vq.nom AS village_quartier_nom,
+                    ep.id AS entite_id,
+                    ep.sigle AS entite_sigle,
+                    ep.nom AS entite_nom,
+                    COALESCE(SUM(plr.nombre_voix),0) AS total_voix,
+                    0 AS ordre_ligne
+                FROM lignes_retenues lr
+                JOIN public.arrondissements a ON a.id = lr.arrondissement_id
+                JOIN public.communes com ON com.id = a.commune_id
+                LEFT JOIN public.departements dep ON dep.id = com.departement_id
+                LEFT JOIN public.circonscriptions_electorales ce ON ce.id = a.circonscription_id
+                JOIN public.villages_quartiers vq ON vq.id = lr.village_quartier_id
+                JOIN public.pv_ligne_resultats plr ON plr.pv_ligne_id = lr.pv_ligne_id
+                JOIN public.candidatures ca ON ca.id = plr.candidature_id
+                JOIN public.entites_politiques ep ON ep.id = ca.entite_politique_id
+                GROUP BY
+                    dep.id, dep.nom,
+                    com.id, com.nom,
+                    ce.id, ce.nom,
+                    a.id, a.nom,
+                    vq.id, vq.nom,
+                    ep.id, ep.sigle, ep.nom
+            ),
+            ligne_bulletins_nuls AS (
+                SELECT
+                    dep.id AS departement_id,
+                    dep.nom AS departement_nom,
+                    com.id AS commune_id,
+                    com.nom AS commune_nom,
+                    ce.id AS circonscription_id,
+                    ce.nom AS circonscription_nom,
+                    a.id AS arrondissement_id,
+                    a.nom AS arrondissement_nom,
+                    vq.id AS village_quartier_id,
+                    vq.nom AS village_quartier_nom,
+                    NULL::int AS entite_id,
+                    NULL::text AS entite_sigle,
+                    'Bulletin nul'::text AS entite_nom,
+                    lr.bulletins_nuls AS total_voix,
+                    1 AS ordre_ligne
+                FROM lignes_retenues lr
+                JOIN public.arrondissements a ON a.id = lr.arrondissement_id
+                JOIN public.communes com ON com.id = a.commune_id
+                LEFT JOIN public.departements dep ON dep.id = com.departement_id
+                LEFT JOIN public.circonscriptions_electorales ce ON ce.id = a.circonscription_id
+                JOIN public.villages_quartiers vq ON vq.id = lr.village_quartier_id
+            )
+            SELECT
+                departement_id, departement_nom,
+                commune_id, commune_nom,
+                circonscription_id, circonscription_nom,
+                arrondissement_id, arrondissement_nom,
+                village_quartier_id, village_quartier_nom,
+                entite_id, entite_sigle, entite_nom,
+                total_voix
+            FROM (
+                SELECT * FROM voix_par_entite
+                UNION ALL
+                SELECT * FROM ligne_bulletins_nuls
+            ) x
+            ORDER BY
+                departement_nom, commune_nom, arrondissement_nom, village_quartier_nom,
+                ordre_ligne ASC,
+                total_voix DESC,
+                entite_nom
+        ", [$election->id]);
 
-        // Stats par centre de vote (agrégées)
-        $parCentreVote = [];
-        $centres = collect($data['postes'] ?? [])->groupBy('centre_nom');
-        foreach ($centres as $centreNom => $postesGroupe) {
-            $inscrits = $postesGroupe->sum('electeurs_inscrits');
-            $votants = $postesGroupe->sum('votants');
-            $taux = $inscrits > 0 ? round(($votants / $inscrits) * 100, 2) : 0;
+        // ========================================
+        // VILLAGES NON SAISIS
+        // ========================================
+        
+        $villagesNonSaisis = DB::select("
+            WITH lignes_avec_pv AS (
+                SELECT
+                    pv.niveau_id::int AS arrondissement_id,
+                    pv.id AS proces_verbal_id,
+                    pv.created_at AS pv_created_at,
+                    pl.id AS pv_ligne_id,
+                    pl.village_quartier_id,
+                    pl.created_at AS ligne_created_at
+                FROM public.proces_verbaux pv
+                JOIN public.pv_lignes pl ON pl.proces_verbal_id = pv.id
+                WHERE pv.niveau = 'arrondissement'
+                    AND pv.statut IN ('valide','publie')
+                    AND pv.election_id = ?
+                    AND pl.village_quartier_id IS NOT NULL
+            ),
+            dedup_lignes AS (
+                SELECT
+                    l.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY l.arrondissement_id, l.village_quartier_id
+                        ORDER BY l.pv_created_at DESC, l.ligne_created_at DESC, l.pv_ligne_id DESC
+                    ) AS rn
+                FROM lignes_avec_pv l
+            ),
+            villages_saisis AS (
+                SELECT DISTINCT village_quartier_id
+                FROM dedup_lignes
+                WHERE rn = 1
+            ),
+            referentiel AS (
+                SELECT
+                    dep.id AS departement_id,
+                    dep.nom AS departement_nom,
+                    com.id AS commune_id,
+                    com.nom AS commune_nom,
+                    a.id AS arrondissement_id,
+                    a.nom AS arrondissement_nom,
+                    vq.id AS village_quartier_id,
+                    vq.nom AS village_quartier_nom
+                FROM public.villages_quartiers vq
+                JOIN public.arrondissements a ON a.id = vq.arrondissement_id
+                JOIN public.communes com ON com.id = a.commune_id
+                JOIN public.departements dep ON dep.id = com.departement_id
+                WHERE
+                    dep.nom NOT ILIKE '%diaspora%'
+                    AND com.nom NOT ILIKE '%diaspora%'
+                    AND a.nom NOT ILIKE '%diaspora%'
+                    AND vq.nom NOT ILIKE '%diaspora%'
+            )
+            SELECT
+                r.departement_id, r.departement_nom,
+                r.commune_id, r.commune_nom,
+                r.arrondissement_id, r.arrondissement_nom,
+                r.village_quartier_id, r.village_quartier_nom
+            FROM referentiel r
+            LEFT JOIN villages_saisis vs ON vs.village_quartier_id = r.village_quartier_id
+            WHERE vs.village_quartier_id IS NULL
+            ORDER BY r.departement_nom, r.commune_nom, r.arrondissement_nom, r.village_quartier_nom
+        ", [$election->id]);
 
-            $parCentreVote[] = [
-                'nom' => $centreNom,
-                'taux_participation' => $taux,
-            ];
+        // ========================================
+        // GROUPER LES DONNÉES PAR VILLAGE
+        // ========================================
+        
+        $villagesGroupes = [];
+        foreach ($villagesAvecVoix as $row) {
+            $villageId = $row->village_quartier_id;
+            
+            if (!isset($villagesGroupes[$villageId])) {
+                $villagesGroupes[$villageId] = [
+                    'village_quartier_id' => $villageId,
+                    'village_quartier_nom' => $row->village_quartier_nom,
+                    'arrondissement_id' => $row->arrondissement_id,
+                    'arrondissement_nom' => $row->arrondissement_nom,
+                    'commune_id' => $row->commune_id,
+                    'commune_nom' => $row->commune_nom,
+                    'departement_id' => $row->departement_id,
+                    'departement_nom' => $row->departement_nom,
+                    'circonscription_id' => $row->circonscription_id,
+                    'circonscription_nom' => $row->circonscription_nom,
+                    'entites' => [],
+                    'total_voix' => 0,
+                    'bulletins_nuls' => 0,
+                ];
+            }
+            
+            if ($row->entite_nom === 'Bulletin nul') {
+                $villagesGroupes[$villageId]['bulletins_nuls'] = $row->total_voix;
+            } else {
+                $villagesGroupes[$villageId]['entites'][] = [
+                    'entite_id' => $row->entite_id,
+                    'entite_sigle' => $row->entite_sigle,
+                    'entite_nom' => $row->entite_nom,
+                    'voix' => $row->total_voix,
+                ];
+                $villagesGroupes[$villageId]['total_voix'] += $row->total_voix;
+            }
         }
 
         return view('stats.village', [
             'election' => $election,
-            'villages' => $villages,
-            'villageId' => $villageId,
             'stats' => [
                 'election' => $election,
-                'totaux' => $data['totaux'],
-                'par_poste_vote' => $parPosteVote,
-                'par_centre_vote' => $parCentreVote,
+                'nombre_villages_inscrits' => $nombreVillagesInscrits,
+                'nombre_villages_saisis' => $nombreVillagesSaisis,
+                'villages_avec_voix' => array_values($villagesGroupes),
+                'villages_non_saisis' => $villagesNonSaisis,
             ],
         ]);
     }

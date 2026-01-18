@@ -11,7 +11,15 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+         // Service législatives (déjà existant normalement)
+    $this->app->singleton(ResultatsService::class, function ($app) {
+        return new ResultatsService($app->make(StatsService::class));
+    });
+
+    // ✅ NOUVEAU : Service communales
+    $this->app->singleton(ResultatsCommunalesService::class, function ($app) {
+        return new ResultatsCommunalesService($app->make(StatsService::class));
+    });
     }
 
     /**

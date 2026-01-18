@@ -89,7 +89,9 @@
                 <h3 class="font-semibold text-benin-green-900 mb-1">📌 Lecture des indicateurs</h3>
                 <div class="text-sm text-benin-green-800 space-y-1">
                     <p><strong>Inscrits CENA:</strong> base de référence</p>
-                    <p><strong>Note:</strong> Les PV sont au niveau arrondissement, les villages affichent uniquement leurs inscrits</p>
+                    <p><strong>Inscrits comptabilisés:</strong> inscrits des bureaux couverts par des PV validés</p>
+                    <p><strong>Couverture:</strong> ratio comptabilisés / CENA</p>
+                    <p><strong>Participation:</strong> votants / inscrits CENA</p>
                 </div>
             </div>
         </div>
@@ -204,7 +206,7 @@
 
     <!-- Chart Villages -->
     <div class="bg-white rounded-xl shadow-sm p-6">
-        <h3 class="text-lg font-semibold text-gray-900 mb-4">Villages/Quartiers (Inscrits CENA)</h3>
+        <h3 class="text-lg font-semibold text-gray-900 mb-4">Villages/Quartiers (Participation %)</h3>
         <div style="height: 320px;">
             <canvas id="villagesChart"></canvas>
         </div>
@@ -221,7 +223,7 @@
         </div>
     </div>
 
-    <!-- Table Villages -->
+    <!-- Table Villages - VERSION COMPLÈTE ✅ -->
     <div class="bg-white rounded-xl shadow-sm overflow-hidden">
         <div class="p-6 border-b border-gray-200">
             <div class="flex items-center justify-between">
@@ -238,7 +240,12 @@
                 <thead class="bg-gray-50">
                     <tr>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Village/Quartier</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">PV</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Inscrits CENA</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Inscrits Comptabilisés</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Couverture</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Votants</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Participation</th>
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
@@ -247,13 +254,43 @@
                             <td class="px-6 py-4 whitespace-nowrap">
                                 <div class="font-medium text-gray-900" x-text="r.nom"></div>
                             </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                <span x-text="Number(r.nombre_pv_valides||0).toLocaleString()"></span>
+                            </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm">
                                 <span class="text-blue-600 font-semibold" x-text="Number(r.inscrits_cena||0).toLocaleString()"></span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                <span x-text="Number(r.inscrits_comptabilises||0).toLocaleString()"></span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="px-2 py-1 text-xs font-semibold rounded-full"
+                                      :class="{
+                                          'bg-benin-green-100 text-benin-green-800': (r.couverture_saisie||0) >= 80,
+                                          'bg-benin-yellow-100 text-benin-yellow-800': (r.couverture_saisie||0) >= 50 && (r.couverture_saisie||0) < 80,
+                                          'bg-benin-red-100 text-benin-red-800': (r.couverture_saisie||0) < 50
+                                      }">
+                                    <span x-text="Number(r.couverture_saisie||0).toFixed(1) + '%'"></span>
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                <span x-text="Number(r.nombre_votants||0).toLocaleString()"></span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <div class="flex items-center">
+                                    <div class="flex-1 bg-gray-200 rounded-full h-2 mr-2" style="width: 110px;">
+                                        <div class="bg-benin-green-500 h-2 rounded-full"
+                                             :style="'width: ' + Math.min((r.taux_participation_global||0), 100) + '%'"></div>
+                                    </div>
+                                    <span class="text-sm font-semibold text-gray-900">
+                                        <span x-text="Number(r.taux_participation_global||0).toFixed(2) + '%'"></span>
+                                    </span>
+                                </div>
                             </td>
                         </tr>
                     </template>
                     <template x-if="filtered.length === 0">
-                        <tr><td colspan="2" class="px-6 py-8 text-center text-gray-500">Aucune donnée</td></tr>
+                        <tr><td colspan="7" class="px-6 py-8 text-center text-gray-500">Aucune donnée</td></tr>
                     </template>
                 </tbody>
             </table>
@@ -267,16 +304,16 @@
 <script>
 const beninColors = { green:'#008751', yellow:'#FCD116', red:'#E8112D' };
 
-// Graphique Villages (Inscrits)
+// Graphique Villages (Participation)
 const vilLabels = [
 @foreach(($stats['villages'] ?? []) as $x)
     @if(isset($x['nom'])) '{{ $x['nom'] }}', @endif
 @endforeach
 ];
 
-const vilInscrits = [
+const vilParticipation = [
 @foreach(($stats['villages'] ?? []) as $x)
-    {{ (int)($x['inscrits_cena'] ?? 0) }},
+    {{ (float)($x['taux_participation_global'] ?? 0) }},
 @endforeach
 ];
 
@@ -287,8 +324,8 @@ if (ctxVil && typeof Chart !== 'undefined') {
         data: {
             labels: vilLabels,
             datasets: [{
-                label: 'Inscrits CENA',
-                data: vilInscrits,
+                label: 'Participation (%)',
+                data: vilParticipation,
                 backgroundColor: beninColors.green,
                 borderRadius: 6
             }]
@@ -298,7 +335,11 @@ if (ctxVil && typeof Chart !== 'undefined') {
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-                y: { beginAtZero: true }
+                y: {
+                    beginAtZero: true,
+                    max: 100,
+                    ticks: { callback: v => v + '%' }
+                }
             }
         }
     });

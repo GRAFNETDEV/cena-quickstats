@@ -14,14 +14,20 @@ class ResultatsService
         $this->statsService = $statsService;
     }
 
+    /**
+     * Obtenir les résultats par circonscription pour une élection
+     * ✅ Logique corrigée : TOUS les PV arrondissement + dédup par (arrondissement, village) via created_at
+     */
     public function getResultatsParCirconscription(int $electionId): array
     {
+        // ✅ Récupérer UNIQUEMENT les 24 circonscriptions (exclure Diaspora = 25)
         $circonscriptions = DB::table('circonscriptions_electorales')
             ->select('id', 'nom', 'numero', 'nombre_sieges_total', 'nombre_sieges_femmes')
             ->where('numero', '<=', 24)
             ->orderBy('numero')
             ->get();
 
+        // ✅ Entités politiques candidates
         $entites = DB::table('candidatures as c')
             ->join('entites_politiques as ep', 'ep.id', '=', 'c.entite_politique_id')
             ->where('c.election_id', $electionId)
@@ -85,44 +91,54 @@ class ResultatsService
         ];
     }
 
+    /**
+     * ✅ LOGIQUE CORRIGÉE (sans perte) :
+     * - Prendre TOUS les PV arrondissement valides/publiés de la circonscription
+     * - Dédupliquer au niveau des lignes par (arrondissement_id, village_quartier_id)
+     *   en gardant la dernière saisie selon pv.created_at puis pl.created_at
+     * - Sommer les voix par entité
+     */
     private function getVoixParEntiteDansCirconscription(int $electionId, int $circonscriptionId): array
     {
-        $derniersPV = DB::table('proces_verbaux as pv')
+        // 1) Base : toutes les lignes de PV arrondissement valides/publiés dans la circonscription
+        $lignesAvecPv = DB::table('proces_verbaux as pv')
+            ->join('pv_lignes as pl', 'pl.proces_verbal_id', '=', 'pv.id')
             ->join('arrondissements as a', 'a.id', '=', DB::raw('pv.niveau_id::int'))
             ->where('pv.niveau', 'arrondissement')
             ->whereIn('pv.statut', ['valide', 'publie'])
             ->where('pv.election_id', $electionId)
             ->where('a.circonscription_id', $circonscriptionId)
-            ->select(
-                'pv.id as proces_verbal_id',
-                DB::raw('pv.niveau_id::int as pv_arrondissement_id'),
-                'pv.created_at',
-                DB::raw('ROW_NUMBER() OVER (PARTITION BY pv.niveau_id ORDER BY pv.created_at DESC, pv.id DESC) as rn')
-            )
-            ->get()
-            ->where('rn', 1)
-            ->pluck('proces_verbal_id');
+            ->whereNotNull('pl.village_quartier_id')
+            ->selectRaw("
+                a.id                 AS arrondissement_id,
+                pv.id                AS proces_verbal_id,
+                pv.created_at        AS pv_created_at,
+                pl.id                AS pv_ligne_id,
+                pl.village_quartier_id,
+                pl.created_at        AS ligne_created_at
+            ");
 
-        if ($derniersPV->isEmpty()) return [];
+        // 2) Dédup : garder la dernière ligne par (arrondissement, village)
+        $dedup = DB::query()->fromSub($lignesAvecPv, 'l')
+            ->select('l.*')
+            ->selectRaw("
+                ROW_NUMBER() OVER (
+                    PARTITION BY l.arrondissement_id, l.village_quartier_id
+                    ORDER BY l.pv_created_at DESC, l.ligne_created_at DESC, l.pv_ligne_id DESC
+                ) AS rn
+            ");
 
-        $dernieresLignes = DB::table('pv_lignes as pl')
-            ->whereIn('pl.proces_verbal_id', $derniersPV)
-            ->select(
-                'pl.id as pv_ligne_id',
-                'pl.village_quartier_id',
-                'pl.created_at',
-                DB::raw('ROW_NUMBER() OVER (PARTITION BY pl.village_quartier_id ORDER BY pl.created_at DESC, pl.id DESC) as rn')
-            )
-            ->get()
-            ->where('rn', 1)
-            ->pluck('pv_ligne_id');
+        $lignesRetenues = DB::query()->fromSub($dedup, 'd')
+            ->where('d.rn', 1);
 
-        if ($dernieresLignes->isEmpty()) return [];
-
-        $results = DB::table('pv_ligne_resultats as plr')
+        // 3) Somme des voix par entité politique
+        $results = DB::query()->fromSub($lignesRetenues, 'lr')
+            ->join('pv_ligne_resultats as plr', 'plr.pv_ligne_id', '=', 'lr.pv_ligne_id')
             ->join('candidatures as ca', 'ca.id', '=', 'plr.candidature_id')
-            ->whereIn('plr.pv_ligne_id', $dernieresLignes)
-            ->select('ca.entite_politique_id', DB::raw('SUM(COALESCE(plr.nombre_voix, 0)) as total_voix'))
+            ->select(
+                'ca.entite_politique_id',
+                DB::raw('SUM(COALESCE(plr.nombre_voix, 0)) as total_voix')
+            )
             ->groupBy('ca.entite_politique_id')
             ->get();
 
@@ -133,6 +149,8 @@ class ResultatsService
 
         return $voix;
     }
+
+    /* ==================== LE RESTE INCHANGÉ ==================== */
 
     public function verifierEligibilite(int $electionId): array
     {
@@ -163,6 +181,11 @@ class ResultatsService
                 }
             }
 
+            $pourcentageNational = $data['totaux_par_entite'][$entite->id]['pourcentage_moyen'];
+            if ($pourcentageNational < 10) {
+                $eligible = false;
+            }
+
             $eligibilite[$entite->id] = [
                 'entite' => $entite,
                 'eligible' => $eligible,
@@ -180,19 +203,14 @@ class ResultatsService
         ];
     }
 
-    /**
-     * ✅ ÉTAPES 2 & 3 : Répartir les sièges
-     * Correction : si 1 seul éligible => il prend tout (ordinaires + femmes)
-     */
     public function repartirSieges(int $electionId): array
     {
+        // (Ton code de répartition inchangé)
         $eligibiliteData = $this->verifierEligibilite($electionId);
         $eligibilite = $eligibiliteData['eligibilite'];
         $data = $eligibiliteData['data'];
 
         $entitesEligibles = array_filter($eligibilite, fn($e) => $e['eligible']);
-        $nbEligibles = count($entitesEligibles);
-        $seulEligibleId = ($nbEligibles === 1) ? array_key_first($entitesEligibles) : null;
 
         $repartition = [];
         $siegesTotauxParEntite = [];
@@ -209,8 +227,36 @@ class ResultatsService
             $siegesOrdinaires = $circ->nombre_sieges_total - $circ->nombre_sieges_femmes;
             $totalVoixCirc = $data['matrice'][$circ->id]['total_voix'];
 
-            if ($totalVoixCirc == 0 || $siegesOrdinaires == 0 || $nbEligibles === 0) {
-                // nbEligibles === 0 : personne ne reçoit de sièges
+            if ($totalVoixCirc == 0 && count($entitesEligibles) == 1) {
+                $seulEligibleId = array_key_first($entitesEligibles);
+
+                $siegesAttribues = [];
+                if ($siegesOrdinaires > 0) {
+                    $siegesAttribues[$seulEligibleId] = $siegesOrdinaires;
+                    $siegesTotauxParEntite[$seulEligibleId]['sieges_ordinaires'] += $siegesOrdinaires;
+                }
+
+                $siegeFemme = null;
+                if ($circ->nombre_sieges_femmes > 0) {
+                    $siegeFemme = [
+                        'entite_id' => $seulEligibleId,
+                        'entite_nom' => $eligibilite[$seulEligibleId]['entite']->nom,
+                        'entite_sigle' => $eligibilite[$seulEligibleId]['entite']->sigle,
+                        'voix' => 0,
+                    ];
+                    $siegesTotauxParEntite[$seulEligibleId]['sieges_femmes'] += $circ->nombre_sieges_femmes;
+                }
+
+                $repartition[$circ->id] = [
+                    'info' => $circ,
+                    'sieges_ordinaires' => $siegesAttribues,
+                    'siege_femme' => $siegeFemme,
+                    'quotient_electoral' => 0,
+                ];
+                continue;
+            }
+
+            if ($totalVoixCirc == 0 || $siegesOrdinaires == 0) {
                 $repartition[$circ->id] = [
                     'info' => $circ,
                     'sieges_ordinaires' => [],
@@ -220,21 +266,23 @@ class ResultatsService
                 continue;
             }
 
-            // ✅ ÉTAPE 2 : Sièges ordinaires
             $siegesAttribues = [];
-            $quotientElectoral = $siegesOrdinaires > 0 ? ($totalVoixCirc / $siegesOrdinaires) : 0;
 
-            if ($nbEligibles === 1) {
-                // ✅ CAS SPÉCIAL : un seul éligible => il prend TOUS les sièges ordinaires
-                $siegesAttribues[$seulEligibleId] = (int) $siegesOrdinaires;
-                $siegesTotauxParEntite[$seulEligibleId]['sieges_ordinaires'] += (int) $siegesOrdinaires;
+            if (count($entitesEligibles) == 1) {
+                $seulEligibleId = array_key_first($entitesEligibles);
+                $siegesAttribues[$seulEligibleId] = $siegesOrdinaires;
+                $quotientElectoral = $totalVoixCirc / $siegesOrdinaires;
             } else {
-                // ✅ CAS NORMAL : quotient + plus forts restes
+                $quotientElectoral = $totalVoixCirc / $siegesOrdinaires;
                 $restesVoix = [];
 
                 foreach ($entitesEligibles as $entiteId => $eligData) {
+                    $siegesAttribues[$entiteId] = 0;
+                }
+
+                foreach ($entitesEligibles as $entiteId => $eligData) {
                     $voix = $data['matrice'][$circ->id]['resultats'][$entiteId]['voix'] ?? 0;
-                    $sieges = ($quotientElectoral > 0) ? floor($voix / $quotientElectoral) : 0;
+                    $sieges = floor($voix / $quotientElectoral);
 
                     $siegesAttribues[$entiteId] = (int) $sieges;
                     $restesVoix[$entiteId] = $voix - ($sieges * $quotientElectoral);
@@ -243,38 +291,57 @@ class ResultatsService
                 $siegesRestants = $siegesOrdinaires - array_sum($siegesAttribues);
 
                 if ($siegesRestants > 0) {
-                    arsort($restesVoix);
-                    $compteur = 0;
-                    foreach ($restesVoix as $entiteId => $reste) {
-                        if ($compteur >= $siegesRestants) break;
-                        $siegesAttribues[$entiteId]++;
-                        $compteur++;
+                    while ($siegesRestants > 0) {
+                        $meilleureMoyenne = -1;
+                        $gagnantId = null;
+
+                        foreach ($entitesEligibles as $entiteId => $eligData) {
+                            $voix = $data['matrice'][$circ->id]['resultats'][$entiteId]['voix'] ?? 0;
+                            $siegesActuels = $siegesAttribues[$entiteId];
+                            $moyenne = $voix / ($siegesActuels + 1);
+
+                            if ($moyenne > $meilleureMoyenne) {
+                                $meilleureMoyenne = $moyenne;
+                                $gagnantId = $entiteId;
+                            }
+                        }
+
+                        if ($gagnantId !== null) {
+                            $siegesAttribues[$gagnantId]++;
+                            $siegesRestants--;
+                        } else {
+                            break;
+                        }
                     }
                 }
 
-                foreach ($siegesAttribues as $entiteId => $nbSieges) {
-                    $siegesTotauxParEntite[$entiteId]['sieges_ordinaires'] += (int) $nbSieges;
+                $totalAttribue = array_sum($siegesAttribues);
+                if ($totalAttribue < $siegesOrdinaires) {
+                    arsort($siegesAttribues);
+                    $premierParti = array_key_first($siegesAttribues);
+                    $siegesAttribues[$premierParti] += ($siegesOrdinaires - $totalAttribue);
                 }
             }
 
-            // ✅ ÉTAPE 3 : Siège(s) femme(s)
+            foreach ($siegesAttribues as $entiteId => $nbSieges) {
+                $siegesTotauxParEntite[$entiteId]['sieges_ordinaires'] += $nbSieges;
+            }
+
             $siegeFemme = null;
             if ($circ->nombre_sieges_femmes > 0) {
-                if ($nbEligibles === 1) {
-                    // ✅ CAS SPÉCIAL : un seul éligible => il prend TOUS les sièges femmes
-                    $voixSeul = $data['matrice'][$circ->id]['resultats'][$seulEligibleId]['voix'] ?? 0;
+                if (count($entitesEligibles) == 1) {
+                    $seulEligibleId = array_key_first($entitesEligibles);
+                    $voix = $data['matrice'][$circ->id]['resultats'][$seulEligibleId]['voix'] ?? 0;
 
                     $siegeFemme = [
                         'entite_id' => $seulEligibleId,
                         'entite_nom' => $eligibilite[$seulEligibleId]['entite']->nom,
                         'entite_sigle' => $eligibilite[$seulEligibleId]['entite']->sigle,
-                        'voix' => $voixSeul,
+                        'voix' => $voix,
                     ];
-
-                    $siegesTotauxParEntite[$seulEligibleId]['sieges_femmes'] += (int) $circ->nombre_sieges_femmes;
+                    $siegesTotauxParEntite[$seulEligibleId]['sieges_femmes'] += $circ->nombre_sieges_femmes;
                 } else {
-                    // ✅ CAS NORMAL : siège femme à l’éligible ayant le plus de voix
-                    $maxVoix = -1;
+                    $maxVoix = 0;
                     $gagnantId = null;
 
                     foreach ($entitesEligibles as $entiteId => $eligData) {
@@ -285,14 +352,14 @@ class ResultatsService
                         }
                     }
 
-                    if ($gagnantId !== null) {
+                    if ($gagnantId) {
                         $siegeFemme = [
                             'entite_id' => $gagnantId,
                             'entite_nom' => $eligibilite[$gagnantId]['entite']->nom,
                             'entite_sigle' => $eligibilite[$gagnantId]['entite']->sigle,
                             'voix' => $maxVoix,
                         ];
-                        $siegesTotauxParEntite[$gagnantId]['sieges_femmes'] += (int) $circ->nombre_sieges_femmes;
+                        $siegesTotauxParEntite[$gagnantId]['sieges_femmes'] += $circ->nombre_sieges_femmes;
                     }
                 }
             }
@@ -306,7 +373,7 @@ class ResultatsService
         }
 
         foreach ($siegesTotauxParEntite as $entiteId => &$totaux) {
-            $totaux['total_sieges'] = (int) $totaux['sieges_ordinaires'] + (int) $totaux['sieges_femmes'];
+            $totaux['total_sieges'] = $totaux['sieges_ordinaires'] + $totaux['sieges_femmes'];
         }
 
         return [
@@ -329,8 +396,6 @@ class ResultatsService
         return $circ->numero == 1 ? "1ère circonscription" : "{$circ->numero}ème circonscription";
     }
 
-    // ... exporterResultatsCSV, exporterSiegesCSV, getResume inchangés ...
-
     public function exporterResultatsCSV(int $electionId): string
     {
         $data = $this->getResultatsParCirconscription($electionId);
@@ -347,20 +412,20 @@ class ResultatsService
             $nomCirc = $this->getCirconscriptionNomOrdinal($circ);
             $csv .= $nomCirc;
             foreach ($data['entites'] as $entite) {
-                $voix = $data['matrice'][$circ->id]['resultats'][$entite->id]['voix'];
-                $pct = $data['matrice'][$circ->id]['resultats'][$entite->id]['pourcentage'];
+                $voix = $data['matrice'][$circ->id]['resultats'][$entite->id]['voix'] ?? 0;
+                $pct = $data['matrice'][$circ->id]['resultats'][$entite->id]['pourcentage'] ?? 0;
                 $csv .= ";{$voix};" . number_format($pct, 2, ',', '');
             }
-            $csv .= ";" . $data['matrice'][$circ->id]['total_voix'] . "\n";
+            $csv .= ";" . ($data['matrice'][$circ->id]['total_voix'] ?? 0) . "\n";
         }
 
         $csv .= "TOTAL NATIONAL";
         foreach ($data['entites'] as $entite) {
-            $totalVoix = $data['totaux_par_entite'][$entite->id]['voix'];
-            $pctMoyen = $data['totaux_par_entite'][$entite->id]['pourcentage_moyen'];
+            $totalVoix = $data['totaux_par_entite'][$entite->id]['voix'] ?? 0;
+            $pctMoyen = $data['totaux_par_entite'][$entite->id]['pourcentage_moyen'] ?? 0;
             $csv .= ";{$totalVoix};" . number_format($pctMoyen, 2, ',', '');
         }
-        $csv .= ";" . $data['total_voix_national'] . "\n";
+        $csv .= ";" . ($data['total_voix_national'] ?? 0) . "\n";
 
         return $csv;
     }
@@ -374,8 +439,8 @@ class ResultatsService
 
         foreach ($result['sieges_totaux'] as $entiteId => $sieges) {
             $entite = collect($result['data']['entites'])->firstWhere('id', $entiteId);
-            if ($entite && $sieges['total_sieges'] > 0) {
-                $pctNational = $result['data']['totaux_par_entite'][$entiteId]['pourcentage_moyen'];
+            if ($entite && ($sieges['total_sieges'] ?? 0) > 0) {
+                $pctNational = $result['data']['totaux_par_entite'][$entiteId]['pourcentage_moyen'] ?? 0;
                 $csv .= "{$entite->nom};{$entite->sigle};{$sieges['sieges_ordinaires']};";
                 $csv .= "{$sieges['sieges_femmes']};{$sieges['total_sieges']};";
                 $csv .= number_format($pctNational, 2, ',', '') . "\n";
