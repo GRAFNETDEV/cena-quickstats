@@ -416,12 +416,6 @@ function resultatsApp() {
         countdown: 20,
         timer: null,
 
-        exporterCSV() {
-            exporterCSV() {
-    window.location.href = '{{ route("resultats.export.matrice.csv", ["election_id" => $election->id]) }}';
-},
-        },
-
         lancerCompilation() {
             if (this.isCompiling) return;
 
