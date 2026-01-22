@@ -625,12 +625,10 @@ class ExportController extends Controller
      * ✅ NOUVEAUX EXPORTS POUR ÉLECTIONS COMMUNALES
      */
 
-    /**
-     * Export matrice des résultats communales (toutes communes)
-     */
     public function communalesMatriceCsv(Request $request)
     {
-        $electionId = $request->get('election_id');
+        $electionId = $request->get('election_id') ?: session('election_active');
+
         if (!$electionId) {
             $election = $this->electionActive();
             $electionId = $election ? $election->id : null;
@@ -641,25 +639,19 @@ class ExportController extends Controller
         $election = DB::table('elections')->find($electionId);
         if (!$election) abort(404, "Élection introuvable");
 
-        try {
-            $csv = $this->communalesService->exporterResultatsCSV($electionId);
-            $filename = 'matrice_communales_' . date('Y-m-d_His') . '.csv';
-            
-            return response($csv, 200, [
-                'Content-Type' => 'text/csv; charset=UTF-8',
-                'Content-Disposition' => "attachment; filename=\"{$filename}\"",
-            ]);
-        } catch (\Exception $e) {
-            abort(500, "Erreur lors de l'export : " . $e->getMessage());
-        }
+        $csv = $this->communalesService->exporterResultatsCSV($electionId);
+        $filename = 'matrice_communales_' . date('Y-m-d_His') . '.csv';
+
+        return response($csv, 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+        ]);
     }
 
-    /**
-     * Export des sièges communales
-     */
     public function communalesSiegesCsv(Request $request)
     {
-        $electionId = $request->get('election_id');
+        $electionId = $request->get('election_id') ?: session('election_active');
+
         if (!$electionId) {
             $election = $this->electionActive();
             $electionId = $election ? $election->id : null;
@@ -670,25 +662,22 @@ class ExportController extends Controller
         $election = DB::table('elections')->find($electionId);
         if (!$election) abort(404, "Élection introuvable");
 
-        try {
-            $csv = $this->communalesService->exporterSiegesCSV($electionId);
-            $filename = 'sieges_communales_' . date('Y-m-d_His') . '.csv';
-            
-            return response($csv, 200, [
-                'Content-Type' => 'text/csv; charset=UTF-8',
-                'Content-Disposition' => "attachment; filename=\"{$filename}\"",
-            ]);
-        } catch (\Exception $e) {
-            abort(500, "Erreur lors de l'export : " . $e->getMessage());
-        }
+        $csv = $this->communalesService->exporterSiegesCSV($electionId);
+        $filename = 'sieges_communales_' . date('Y-m-d_His') . '.csv';
+
+        return response($csv, 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+        ]);
     }
 
     /**
-     * Export des détails par commune (communales)
+     * ✅ Détails par commune (doit intégrer arrondissements)
      */
     public function communalesDetailsCsv(Request $request)
     {
-        $electionId = $request->get('election_id');
+        $electionId = $request->get('election_id') ?: session('election_active');
+
         if (!$electionId) {
             $election = $this->electionActive();
             $electionId = $election ? $election->id : null;
@@ -699,25 +688,22 @@ class ExportController extends Controller
         $election = DB::table('elections')->find($electionId);
         if (!$election) abort(404, "Élection introuvable");
 
-        try {
-            $csv = $this->communalesService->exporterDetailsParCommune($electionId);
-            $filename = 'details_communes_' . date('Y-m-d_His') . '.csv';
-            
-            return response($csv, 200, [
-                'Content-Type' => 'text/csv; charset=UTF-8',
-                'Content-Disposition' => "attachment; filename=\"{$filename}\"",
-            ]);
-        } catch (\Exception $e) {
-            abort(500, "Erreur lors de l'export : " . $e->getMessage());
-        }
+        $csv = $this->communalesService->exporterDetailsParCommune($electionId);
+        $filename = 'details_communes_' . date('Y-m-d_His') . '.csv';
+
+        return response($csv, 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+        ]);
     }
 
     /**
-     * Export des détails par arrondissement (communales)
+     * ✅ Détails par arrondissement (avec candidats)
      */
     public function communalesArrondissementsCsv(Request $request)
     {
-        $electionId = $request->get('election_id');
+        $electionId = $request->get('election_id') ?: session('election_active');
+
         if (!$electionId) {
             $election = $this->electionActive();
             $electionId = $election ? $election->id : null;
@@ -728,62 +714,12 @@ class ExportController extends Controller
         $election = DB::table('elections')->find($electionId);
         if (!$election) abort(404, "Élection introuvable");
 
-        try {
-            $csv = $this->communalesService->exporterDetailsParArrondissement($electionId);
-            $filename = 'details_arrondissements_' . date('Y-m-d_His') . '.csv';
-            
-            return response($csv, 200, [
-                'Content-Type' => 'text/csv; charset=UTF-8',
-                'Content-Disposition' => "attachment; filename=\"{$filename}\"",
-            ]);
-        } catch (\Exception $e) {
-            abort(500, "Erreur lors de l'export : " . $e->getMessage());
-        }
-    }
+        $csv = $this->communalesService->exporterDetailsParArrondissement($electionId);
+        $filename = 'details_arrondissements_' . date('Y-m-d_His') . '.csv';
 
-    /**
-     * Export complet communales (tous les exports en un ZIP)
-     */
-    public function communalesExportComplet(Request $request)
-    {
-        $electionId = $request->get('election_id');
-        if (!$electionId) {
-            $election = $this->electionActive();
-            $electionId = $election ? $election->id : null;
-        }
-
-        if (!$electionId) abort(404, "Aucune élection trouvée");
-
-        $election = DB::table('elections')->find($electionId);
-        if (!$election) abort(404, "Élection introuvable");
-
-        try {
-            // Créer un fichier ZIP temporaire
-            $zipFilename = 'export_communales_complet_' . date('Y-m-d_His') . '.zip';
-            $zipPath = storage_path('app/temp/' . $zipFilename);
-            
-            // Créer le dossier temp s'il n'existe pas
-            if (!file_exists(storage_path('app/temp'))) {
-                mkdir(storage_path('app/temp'), 0755, true);
-            }
-
-            $zip = new \ZipArchive();
-            if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== TRUE) {
-                abort(500, "Impossible de créer le fichier ZIP");
-            }
-
-            // Ajouter tous les CSV au ZIP
-            $zip->addFromString('01_matrice_resultats.csv', $this->communalesService->exporterResultatsCSV($electionId));
-            $zip->addFromString('02_sieges.csv', $this->communalesService->exporterSiegesCSV($electionId));
-            $zip->addFromString('03_details_communes.csv', $this->communalesService->exporterDetailsParCommune($electionId));
-            $zip->addFromString('04_details_arrondissements.csv', $this->communalesService->exporterDetailsParArrondissement($electionId));
-
-            $zip->close();
-
-            // Télécharger et supprimer le fichier
-            return response()->download($zipPath, $zipFilename)->deleteFileAfterSend(true);
-        } catch (\Exception $e) {
-            abort(500, "Erreur lors de l'export complet : " . $e->getMessage());
-        }
+        return response($csv, 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+        ]);
     }
 }

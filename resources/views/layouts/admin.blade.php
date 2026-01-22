@@ -41,15 +41,15 @@
         }
         
         .menu-item:hover {
-  background-color: rgba(0, 135, 81, 0.18); /* benin green */
-  border-left: 4px solid #FCD116;          /* benin yellow */
-}
+            background-color: rgba(0, 135, 81, 0.18); /* benin green */
+            border-left: 4px solid #FCD116;          /* benin yellow */
+        }
 
-.menu-item.active {
-  background-color: rgba(0, 135, 81, 0.26);
-  border-left: 4px solid #FCD116;
-  font-weight: 700;
-}
+        .menu-item.active {
+            background-color: rgba(0, 135, 81, 0.26);
+            border-left: 4px solid #FCD116;
+            font-weight: 700;
+        }
         
         .submenu {
             max-height: 0;
@@ -79,10 +79,9 @@
         
         <!-- Sidebar -->
         <aside class="sidebar bg-gradient-to-b from-benin-green-800 via-benin-green-700 to-benin-green-900 text-white w-64 flex-shrink-0 no-print"
-       :class="{ 'collapsed': !sidebarOpen }"
-       x-show="sidebarOpen"
-       x-transition>
-
+               :class="{ 'collapsed': !sidebarOpen }"
+               x-show="sidebarOpen"
+               x-transition>
             
             <!-- Logo -->
             <div class="p-6 border-b border-blue-700">
@@ -99,7 +98,7 @@
             
             <!-- Menu -->
             <nav class="flex-1 overflow-y-auto p-4 space-y-2" x-data="{ 
-                openSubmenu: '{{ request()->is('stats/*') ? 'stats' : (request()->is('resultats/*') ? 'resultats' : '') }}'
+                openSubmenu: '{{ request()->is('stats/*') ? 'stats' : (request()->is('resultats/*') ? 'resultats' : (request()->is('rapports/*') ? 'rapports' : '')) }}'
             }">
                 
                 <!-- Dashboard -->
@@ -148,7 +147,7 @@
                             <span>Arrondissements</span>
                         </a>
                         <a href="{{ route('stats.village') }}" 
-                           class="flex items-center space-x-2 px-4 py-2 rounded text-sm hover:bg-benin-green-700/40{{ request()->is('stats/village') ? 'bg-benin-green-700/50' : '' }}">
+                           class="flex items-center space-x-2 px-4 py-2 rounded text-sm hover:bg-benin-green-700/40 {{ request()->is('stats/village') ? 'bg-benin-green-700/50' : '' }}">
                             <i class="fas fa-home-lg-alt w-4"></i>
                             <span>Villages/Quartiers</span>
                         </a>
@@ -177,18 +176,32 @@
                 </div>
                 
                 <!-- Rapports -->
-                <a href="#" 
-                   class="menu-item flex items-center space-x-3 px-4 py-3 rounded-lg">
-                    <i class="fas fa-file-alt w-5"></i>
-                    <span>Rapports</span>
-                </a>
+                <div>
+                    <button @click="openSubmenu = openSubmenu === 'rapports' ? '' : 'rapports'"
+                            class="menu-item w-full flex items-center justify-between px-4 py-3 rounded-lg {{ request()->is('rapports/*') ? 'active' : '' }}">
+                        <div class="flex items-center space-x-3">
+                            <i class="fas fa-file-alt w-5"></i>
+                            <span>Rapports</span>
+                        </div>
+                        <i class="fas fa-chevron-down text-xs transition-transform" 
+                           :class="{ 'rotate-180': openSubmenu === 'rapports' }"></i>
+                    </button>
+                    
+                    <div class="submenu ml-4 mt-1 space-y-1" :class="{ 'open': openSubmenu === 'rapports' }">
+                        <a href="{{ route('rapports.communales') }}" 
+                           class="flex items-center space-x-2 px-4 py-2 rounded text-sm hover:bg-benin-green-700/40 {{ request()->is('rapports/communales*') ? 'bg-benin-green-700/50' : '' }}">
+                            <i class="fas fa-building w-4"></i>
+                            <span>Élections Communales</span>
+                        </a>
+                    </div>
+                </div>
                 
                 <!-- Paramètres -->
                 <a href="{{ route('parametres.index') }}" 
-   class="menu-item flex items-center space-x-3 px-4 py-3 rounded-lg {{ request()->is('parametres*') ? 'active' : '' }}">
-    <i class="fas fa-cog w-5"></i>
-    <span>Paramètres</span>
-</a>
+                   class="menu-item flex items-center space-x-3 px-4 py-3 rounded-lg {{ request()->is('parametres*') ? 'active' : '' }}">
+                    <i class="fas fa-cog w-5"></i>
+                    <span>Paramètres</span>
+                </a>
                 
             </nav>
             
@@ -322,8 +335,8 @@
         @endif
     </div>
 
-        <!-- Modales Personnalisées (Juste avant @stack('scripts')) -->
-@include('components.modals')
+    <!-- Modales Personnalisées (Juste avant @stack('scripts')) -->
+    @include('components.modals')
     
     @stack('scripts')
     

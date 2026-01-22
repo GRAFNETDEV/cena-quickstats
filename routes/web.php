@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ExportController;
 use App\Http\Controllers\ResultatsController;
 use App\Http\Controllers\ParametresController;
+use App\Http\Controllers\RapportCommunalesController;
 
 Route::get('/', function () {
     return redirect()->route('login');
@@ -154,6 +155,13 @@ Route::post('/parametres/pv/{id}/annuler', [ParametresController::class, 'annule
 Route::delete('/parametres/pv/{id}/supprimer', [ParametresController::class, 'supprimerPv']);
 Route::get('/parametres/utilisateurs', [ParametresController::class, 'utilisateurs']);
 
+Route::prefix('rapports')->name('rapports.')->group(function () {
+    Route::get('/communales', [RapportCommunalesController::class, 'index'])
+        ->name('communales');
+
+    Route::get('/communales/pdf', [RapportCommunalesController::class, 'pdf'])
+        ->name('communales.pdf');
+});
 
 });
 
