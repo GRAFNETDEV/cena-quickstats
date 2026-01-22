@@ -5,12 +5,14 @@ namespace App\Services;
 use Illuminate\Support\Facades\DB;
 
 /**
- * ✅ COMMUNALES — VERSION "SIÈGES OFFICIELS PAR ARRONDISSEMENT"
+ * ✅ COMMUNALES — VERSION CONFORME AU CODE ÉLECTORAL BÉNINOIS
  *
- * - On calcule le quotient communal (info) : population / sièges (somme des sièges d'arrondissements)
- * - MAIS la répartition des sièges aux arrondissements = valeurs OFFICIELLES arrondissements.siege
- * - Ensuite, on attribue les sièges aux listes dans chaque arrondissement (Article 187)
+ * - Quotient communal (info) : population / sièges (somme des sièges d'arrondissements)
+ * - Répartition des sièges aux arrondissements = valeurs OFFICIELLES arrondissements.siege
+ * - Attribution des sièges aux listes dans chaque arrondissement (Articles 186-187)
  * - Dédup : on ne retient qu'une ligne (arrondissement, village_quartier) selon PV/ligne les plus récents
+ * 
+ * ✅ CORRECTION CRITIQUE : Article 187.3 - La liste majoritaire participe à la proportionnelle
  */
 class ResultatsCommunalesService
 {
@@ -62,7 +64,7 @@ class ResultatsCommunalesService
                 ->orderBy('nom')
                 ->get();
 
-            // ✅ SIÈGES OFFICIELS
+            // ✅ SIÈGES OFFICIELS (données de référence)
             $nombreSieges = (int) $arrondissements->sum('siege');
             $population = (int) $arrondissements->sum('population');
 
@@ -162,7 +164,7 @@ class ResultatsCommunalesService
     }
 
     /**
-     * ✅ ÉTAPE 1 : Vérifier éligibilité nationale (Seuil 10%)
+     * ✅ ÉTAPE 1 : Vérifier éligibilité nationale (Seuil 10% - Article 184)
      */
     public function verifierEligibiliteNationale(int $electionId): array
     {
@@ -227,10 +229,10 @@ class ResultatsCommunalesService
                 continue;
             }
 
-            // Quotient communal (info)
+            // Quotient communal (Article 183)
             $quotientCommunal = $populationCommune / $nombreSiegesCommune;
 
-            // ✅ SIÈGES PAR ARRONDISSEMENT = OFFICIEL arrondissements.siege
+            // ✅ SIÈGES PAR ARRONDISSEMENT = OFFICIEL arrondissements.siege (données de référence)
             $siegesParArrondissement = [];
             foreach ($arrondissements as $arr) {
                 $siegesParArrondissement[$arr->id] = [
@@ -242,7 +244,7 @@ class ResultatsCommunalesService
                 ];
             }
 
-            // Attribution sièges aux listes DANS chaque arrondissement
+            // Attribution sièges aux listes DANS chaque arrondissement (Articles 186-187)
             $repartitionArrondissements = $this->attribuerSiegesAuxListesParArrondissement(
                 $electionId,
                 $commune->id,
@@ -322,7 +324,7 @@ class ResultatsCommunalesService
             }
 
             if ($totalVoixArrondissement > 0) {
-                // 1 siège => uninominal majoritaire
+                // 1 siège => uninominal majoritaire (Article 186)
                 if ($siegesArrondissement === 1) {
                     $gagnant = $this->scrutinUninominalMajoritaire($resultatsListes);
                     if ($gagnant) {
@@ -333,7 +335,7 @@ class ResultatsCommunalesService
                     $resultatsListes = $this->attribuerSiegesSelonArticle187($resultatsListes, $siegesArrondissement);
                 }
 
-                // Candidats élus
+                // Candidats élus (Articles 187.7-187.8)
                 foreach ($resultatsListes as $entiteId => &$listeData) {
                     if (($listeData['sieges'] ?? 0) > 0) {
                         $listeData['candidats'] = $this->getCandidatsElus(
@@ -362,7 +364,7 @@ class ResultatsCommunalesService
     }
 
     /**
-     * 1 siège : gagnant = plus grand nombre de voix
+     * Article 186 : 1 siège => gagnant = plus grand nombre de voix
      */
     private function scrutinUninominalMajoritaire(array $resultatsListes): ?array
     {
@@ -384,15 +386,21 @@ class ResultatsCommunalesService
      */
     private function attribuerSiegesSelonArticle187(array $resultatsListes, int $nombreSieges): array
     {
-        $majoriteSieges = (int) ceil($nombreSieges / 2);
+        // ✅ CORRECTION CRITIQUE : majorité absolue = floor(n/2) + 1
+        // Exemple : 6 sièges → 4 (pas 3), 10 sièges → 6 (pas 5)
+        $majoriteSieges = intdiv($nombreSieges, 2) + 1;
 
-        // Trier par pourcentage décroissant
-        uasort($resultatsListes, fn($a, $b) => $b['pourcentage'] <=> $a['pourcentage']);
+        // Trier : % DESC puis voix DESC (Article 187.4 : plus fort suffrage)
+        uasort($resultatsListes, function ($a, $b) {
+            $p = ($b['pourcentage'] ?? 0) <=> ($a['pourcentage'] ?? 0);
+            if ($p !== 0) return $p;
+            return ($b['voix'] ?? 0) <=> ($a['voix'] ?? 0);
+        });
 
         $listePremiere = reset($resultatsListes);
         $listeDeuxieme = next($resultatsListes);
 
-        // >= 50% => majorité
+        // >= 50% => majorité (Article 187.1)
         if (($listePremiere['pourcentage'] ?? 0) >= 50) {
             $resultatsListes[$listePremiere['entite_id']]['sieges'] = $majoriteSieges;
 
@@ -400,7 +408,7 @@ class ResultatsCommunalesService
             return $this->repartirSiegesRestants($resultatsListes, $listePremiere['entite_id'], $siegesRestants);
         }
 
-        // >= 40% => majorité (et si 2 listes >=40, la plus forte garde la majorité)
+        // >= 40% => majorité (Article 187.2)
         if (($listePremiere['pourcentage'] ?? 0) >= 40) {
             $resultatsListes[$listePremiere['entite_id']]['sieges'] = $majoriteSieges;
 
@@ -408,7 +416,7 @@ class ResultatsCommunalesService
             return $this->repartirSiegesRestants($resultatsListes, $listePremiere['entite_id'], $siegesRestants);
         }
 
-        // Sinon proportionnelle (D'Hondt) en excluant <10% (local)
+        // Sinon proportionnelle intégrale (Article 187.5)
         $listesEligibles = array_filter($resultatsListes, fn($l) => ($l['pourcentage'] ?? 0) >= 10);
         if (empty($listesEligibles)) {
             $listesEligibles = $resultatsListes;
@@ -418,7 +426,11 @@ class ResultatsCommunalesService
     }
 
     /**
+     * ✅ CORRECTION CRITIQUE : Article 187.3
      * Répartir les sièges restants après attribution de la majorité
+     * 
+     * IMPORTANT : La liste ayant obtenu la prime majoritaire PARTICIPE à la proportionnelle
+     * L'Article 187.3 dit : "entre TOUTES les listes" (sauf < 10%)
      */
     private function repartirSiegesRestants(array $resultatsListes, int $entiteMajorite, int $siegesRestants): array
     {
@@ -426,18 +438,19 @@ class ResultatsCommunalesService
             return $resultatsListes;
         }
 
-        $listesRestantes = array_filter($resultatsListes, fn($l) => $l['entite_id'] != $entiteMajorite);
-
-        $listesEligibles = array_filter($listesRestantes, fn($l) => ($l['pourcentage'] ?? 0) >= 10);
+        // ✅ Article 187.3 : "entre TOUTES les listes"
+        // La liste ayant la majorité PARTICIPE à la proportionnelle
+        // Seule exclusion : listes < 10% LOCAL
+        $listesEligibles = array_filter($resultatsListes, fn($l) => ($l['pourcentage'] ?? 0) >= 10);
         if (empty($listesEligibles)) {
-            $listesEligibles = $listesRestantes;
+            $listesEligibles = $resultatsListes;
         }
 
         return $this->repartitionPlusForteMoyenne($listesEligibles, $siegesRestants, $resultatsListes);
     }
 
     /**
-     * Plus forte moyenne (D'Hondt)
+     * Article 187.3-187.4 : Plus forte moyenne (D'Hondt)
      */
     private function repartitionPlusForteMoyenne(array $listesEligibles, int $nombreSieges, array $tousResultats): array
     {
@@ -456,7 +469,7 @@ class ResultatsCommunalesService
 
                 $moyenne = $sieges >= 0 ? ($voix / ($sieges + 1)) : 0;
 
-                // En cas d'égalité, plus grand nombre de suffrages
+                // Article 187.4 : En cas d'égalité, plus grand nombre de suffrages
                 $voixGagnant = $gagnantId ? (int) ($listesEligibles[$gagnantId]['voix'] ?? 0) : -1;
 
                 if ($moyenne > $maxMoyenne || ($moyenne == $maxMoyenne && $voix > $voixGagnant)) {
@@ -521,7 +534,7 @@ class ResultatsCommunalesService
     }
 
     /**
-     * Candidats élus (Article 187.7-187.8)
+     * Articles 187.7-187.8 : Candidats élus selon l'ordre de présentation
      */
     private function getCandidatsElus(int $electionId, int $entiteId, int $arrondissementId, int $nombreSieges): array
     {
@@ -656,8 +669,7 @@ class ResultatsCommunalesService
     }
 
     /**
-     * ✅ Export CSV - Détails par commune (INTÈGRE les arrondissements)
-     * Format "par arrondissement + parti" + si besoin tu peux filtrer les lignes à sièges>0.
+     * Export CSV - Détails par commune
      */
     public function exporterDetailsParCommune(int $electionId): string
     {
@@ -681,7 +693,6 @@ class ResultatsCommunalesService
                 if (!$arrObj) continue;
 
                 if (empty($arrData['listes'])) {
-                    // même si aucun vote : on peut écrire une ligne "Aucun vote"
                     $csv .= "{$commune->departement_nom};{$commune->nom};{$rep['population']};{$rep['nombre_sieges']};";
                     $csv .= number_format($rep['quotient_communal'], 2, ',', '') . ";";
                     $csv .= "{$arrData['arrondissement_nom']};{$arrObj->population};{$arrData['sieges_arrondissement']};";
@@ -689,7 +700,6 @@ class ResultatsCommunalesService
                     continue;
                 }
 
-                // Pour chaque parti (éligible) on sort une ligne (tu peux filtrer si tu veux: if ($listeData['sieges']==0) continue;)
                 foreach ($arrData['listes'] as $entiteId => $listeData) {
                     $entite = collect($result['data']['entites'])->firstWhere('id', $entiteId);
 
