@@ -117,6 +117,7 @@ class RapportCommunalesController extends Controller
             }
 
             // ✅ Réduction : ne garder que les listes sièges>0 (sinon DomPDF explose au national)
+            // ✅ Conserver aussi methode_attribution pour affichage
             foreach ($arrs as &$arrData) {
                 if (!empty($arrData['listes']) && is_array($arrData['listes'])) {
                     $filtered = [];
@@ -126,6 +127,15 @@ class RapportCommunalesController extends Controller
                         }
                     }
                     $arrData['listes'] = $filtered;
+                }
+                
+                // ✅ S'assurer que methode_attribution est présent
+                if (!isset($arrData['methode_attribution'])) {
+                    $arrData['methode_attribution'] = [
+                        'type' => 'inconnu',
+                        'description' => 'Méthode non déterminée',
+                        'details' => '',
+                    ];
                 }
             }
             unset($arrData);

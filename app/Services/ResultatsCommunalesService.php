@@ -12,7 +12,10 @@ use Illuminate\Support\Facades\DB;
  * - Attribution des sièges aux listes dans chaque arrondissement (Articles 186-187)
  * - Dédup : on ne retient qu'une ligne (arrondissement, village_quartier) selon PV/ligne les plus récents
  * 
- * ✅ CORRECTION CRITIQUE : Article 187.3 - La liste majoritaire participe à la proportionnelle
+ * ✅ CORRECTIONS CRITIQUES APPLIQUÉES :
+ * 1. Quotient électoral = Total suffrages des listes éligibles (≥10% local) / Sièges restants
+ * 2. Liste majoritaire participe à la proportionnelle en commençant à 0 siège
+ * 3. Majorité absolue = floor(n/2) + 1 (ex: 5→3, 6→4, 10→6)
  */
 class ResultatsCommunalesService
 {
@@ -95,9 +98,9 @@ class ResultatsCommunalesService
 
                 $totauxParEntite[$entite->id]['voix'] += (int) $voix;
             }
-        }
+        } 
 
-        // Pourcentage national
+        // Pourcentage national  
         $totalVoixNational = array_sum($totauxParCommune);
         foreach ($entites as $entite) {
             $totauxParEntite[$entite->id]['pourcentage_national'] =
@@ -255,6 +258,16 @@ class ResultatsCommunalesService
             // Somme sièges par entité
             foreach ($repartitionArrondissements as $arrData) {
                 foreach ($arrData['listes'] as $entiteId => $listeData) {
+                    // ✅ Ignorer les clés de métadonnées (commençant par _)
+                    if (is_string($entiteId) && str_starts_with($entiteId, '_')) {
+                        continue;
+                    }
+                    
+                    // Vérifier que c'est bien une entité valide
+                    if (!isset($siegesTotauxParEntite[$entiteId])) {
+                        continue;
+                    }
+                    
                     $siegesTotauxParEntite[$entiteId]['sieges_total'] += (int) ($listeData['sieges'] ?? 0);
 
                     if (!isset($siegesTotauxParEntite[$entiteId]['details_par_commune'][$commune->id])) {
@@ -332,7 +345,11 @@ class ResultatsCommunalesService
                     }
                 } else {
                     // Plusieurs sièges => Article 187 (majorité + proportionnelle)
-                    $resultatsListes = $this->attribuerSiegesSelonArticle187($resultatsListes, $siegesArrondissement);
+                    $resultatsListes = $this->attribuerSiegesSelonArticle187(
+                        $resultatsListes, 
+                        $siegesArrondissement,
+                        $totalVoixArrondissement
+                    );
                 }
 
                 // Candidats élus (Articles 187.7-187.8)
@@ -349,14 +366,32 @@ class ResultatsCommunalesService
                 unset($listeData);
             }
 
+            // Déterminer la méthode d'attribution utilisée
+            $methodeAttribution = $this->determinerMethodeAttribution($resultatsListes, $siegesArrondissement);
+            
+            // ✅ Nettoyer les métadonnées avant de retourner (éviter qu'elles soient traitées comme des entités)
+            if (isset($resultatsListes['_methode_globale'])) {
+                unset($resultatsListes['_methode_globale']);
+            }
+            
+            // ✅ Calculer les sièges attribués en ignorant les métadonnées
+            $siegesAttribues = 0;
+            foreach ($resultatsListes as $entiteId => $listeData) {
+                if (is_string($entiteId) && str_starts_with($entiteId, '_')) {
+                    continue;
+                }
+                $siegesAttribues += (int) ($listeData['sieges'] ?? 0);
+            }
+            
             $repartitionArrondissements[$arrId] = [
                 'arrondissement_id' => $arrId,
                 'arrondissement_nom' => $arrondissement->nom,
                 'sieges_arrondissement' => $siegesArrondissement,
-                'sieges_attribues' => array_sum(array_column($resultatsListes, 'sieges')),
+                'sieges_attribues' => $siegesAttribues,
                 'total_voix' => (int) $totalVoixArrondissement,
                 'listes' => $resultatsListes,
                 'details_repartition' => $arrData,
+                'methode_attribution' => $methodeAttribution,
             ];
         }
 
@@ -382,12 +417,12 @@ class ResultatsCommunalesService
     }
 
     /**
-     * ✅ Article 187 : majorité + proportionnelle (plus forte moyenne)
+     * ✅ Article 187 : majorité + proportionnelle (avec quotient électoral puis plus forte moyenne)
      */
-    private function attribuerSiegesSelonArticle187(array $resultatsListes, int $nombreSieges): array
+    private function attribuerSiegesSelonArticle187(array $resultatsListes, int $nombreSieges, int $totalVoixArrondissement): array
     {
-        // ✅ CORRECTION CRITIQUE : majorité absolue = floor(n/2) + 1
-        // Exemple : 6 sièges → 4 (pas 3), 10 sièges → 6 (pas 5)
+        // ✅ Majorité absolue = floor(n/2) + 1
+        // Exemple : 5 sièges → 3, 6 sièges → 4, 10 sièges → 6
         $majoriteSieges = intdiv($nombreSieges, 2) + 1;
 
         // Trier : % DESC puis voix DESC (Article 187.4 : plus fort suffrage)
@@ -403,17 +438,69 @@ class ResultatsCommunalesService
         // >= 50% => majorité (Article 187.1)
         if (($listePremiere['pourcentage'] ?? 0) >= 50) {
             $resultatsListes[$listePremiere['entite_id']]['sieges'] = $majoriteSieges;
+            $resultatsListes[$listePremiere['entite_id']]['_methode'] = 'majorite_50';
 
             $siegesRestants = $nombreSieges - $majoriteSieges;
-            return $this->repartirSiegesRestants($resultatsListes, $listePremiere['entite_id'], $siegesRestants);
+            
+            // ✅ Calculer le QE avec uniquement les voix des listes éligibles
+            $listesEligibles = array_filter($resultatsListes, fn($l) => ($l['pourcentage'] ?? 0) >= 10);
+            if (empty($listesEligibles)) {
+                $listesEligibles = $resultatsListes;
+            }
+            $totalVoixEligibles = array_sum(array_column($listesEligibles, 'voix'));
+            $qe = $siegesRestants > 0 ? $totalVoixEligibles / $siegesRestants : 0;
+            
+            $resultatsListes = $this->repartirSiegesRestants(
+                $resultatsListes, 
+                $listePremiere['entite_id'], 
+                $siegesRestants,
+                $totalVoixArrondissement
+            );
+            
+            // Marquer la méthode globale
+            $resultatsListes['_methode_globale'] = [
+                'type' => 'majorite_50',
+                'liste_majoritaire' => $listePremiere['entite_id'],
+                'sieges_majorite' => $majoriteSieges,
+                'sieges_restants' => $siegesRestants,
+                'quotient_electoral' => $qe,
+            ];
+            
+            return $resultatsListes;
         }
 
         // >= 40% => majorité (Article 187.2)
         if (($listePremiere['pourcentage'] ?? 0) >= 40) {
             $resultatsListes[$listePremiere['entite_id']]['sieges'] = $majoriteSieges;
+            $resultatsListes[$listePremiere['entite_id']]['_methode'] = 'majorite_40';
 
             $siegesRestants = $nombreSieges - $majoriteSieges;
-            return $this->repartirSiegesRestants($resultatsListes, $listePremiere['entite_id'], $siegesRestants);
+            
+            // ✅ Calculer le QE avec uniquement les voix des listes éligibles
+            $listesEligibles = array_filter($resultatsListes, fn($l) => ($l['pourcentage'] ?? 0) >= 10);
+            if (empty($listesEligibles)) {
+                $listesEligibles = $resultatsListes;
+            }
+            $totalVoixEligibles = array_sum(array_column($listesEligibles, 'voix'));
+            $qe = $siegesRestants > 0 ? $totalVoixEligibles / $siegesRestants : 0;
+            
+            $resultatsListes = $this->repartirSiegesRestants(
+                $resultatsListes, 
+                $listePremiere['entite_id'], 
+                $siegesRestants,
+                $totalVoixArrondissement
+            );
+            
+            // Marquer la méthode globale
+            $resultatsListes['_methode_globale'] = [
+                'type' => 'majorite_40',
+                'liste_majoritaire' => $listePremiere['entite_id'],
+                'sieges_majorite' => $majoriteSieges,
+                'sieges_restants' => $siegesRestants,
+                'quotient_electoral' => $qe,
+            ];
+            
+            return $resultatsListes;
         }
 
         // Sinon proportionnelle intégrale (Article 187.5)
@@ -422,44 +509,193 @@ class ResultatsCommunalesService
             $listesEligibles = $resultatsListes;
         }
 
-        return $this->repartitionPlusForteMoyenne($listesEligibles, $nombreSieges, $resultatsListes);
+        // ✅ Calculer le QE avec uniquement les voix des listes éligibles
+        $totalVoixEligibles = array_sum(array_column($listesEligibles, 'voix'));
+        $qe = $totalVoixEligibles / $nombreSieges;
+
+        $resultatsListes = $this->repartitionProportionnelleComplete(
+            $listesEligibles, 
+            $nombreSieges, 
+            $resultatsListes,
+            $totalVoixArrondissement
+        );
+        
+        // Marquer la méthode globale
+        $resultatsListes['_methode_globale'] = [
+            'type' => 'proportionnelle_integrale',
+            'quotient_electoral' => $qe,
+        ];
+        
+        return $resultatsListes;
     }
 
     /**
      * ✅ CORRECTION CRITIQUE : Article 187.3
      * Répartir les sièges restants après attribution de la majorité
      * 
-     * IMPORTANT : La liste ayant obtenu la prime majoritaire PARTICIPE à la proportionnelle
-     * L'Article 187.3 dit : "entre TOUTES les listes" (sauf < 10%)
+     * MÉTHODE CONFORME (Slides 9-15) :
+     * 1. Quotient électoral = Total suffrages **des listes éligibles** / Sièges restants
+     * 2. Attribution au quotient (partie entière)
+     * 3. Reste : Plus forte moyenne (liste majoritaire participe en commençant à 0)
+     * 
+     * ⚠️ IMPORTANT : Le QE utilise uniquement les voix des listes ≥10% local (Slide 12)
      */
-    private function repartirSiegesRestants(array $resultatsListes, int $entiteMajorite, int $siegesRestants): array
-    {
+    private function repartirSiegesRestants(
+        array $resultatsListes, 
+        int $entiteMajorite, 
+        int $siegesRestants,
+        int $totalVoixArrondissement
+    ): array {
         if ($siegesRestants <= 0) {
             return $resultatsListes;
         }
 
-        // ✅ Article 187.3 : "entre TOUTES les listes"
-        // La liste ayant la majorité PARTICIPE à la proportionnelle
-        // Seule exclusion : listes < 10% LOCAL
+        // ✅ Article 187.3 : Listes éligibles (>= 10% LOCAL)
+        // MAIS la liste majoritaire PARTICIPE même si elle a déjà des sièges
         $listesEligibles = array_filter($resultatsListes, fn($l) => ($l['pourcentage'] ?? 0) >= 10);
+        
+        // ✅ FALLBACK EXPLICITE : Si aucune liste n'atteint 10% (cas exceptionnel)
+        // On réintroduit toutes les listes pour éviter une impossibilité d'attribution
+        // Ceci garantit que tous les sièges restants seront attribués
         if (empty($listesEligibles)) {
+            \Log::warning("Arrondissement: Aucune liste n'atteint 10% local - Fallback sur toutes les listes", [
+                'sieges_restants' => $siegesRestants,
+                'total_voix' => $totalVoixArrondissement,
+            ]);
             $listesEligibles = $resultatsListes;
         }
 
-        return $this->repartitionPlusForteMoyenne($listesEligibles, $siegesRestants, $resultatsListes);
+        // ✅ CORRECTION : Quotient = Somme des voix des listes éligibles / Sièges restants
+        // Pas le total de tous les suffrages, mais uniquement ceux des listes ≥10%
+        $totalVoixEligibles = 0;
+        foreach ($listesEligibles as $listeData) {
+            $totalVoixEligibles += (int) ($listeData['voix'] ?? 0);
+        }
+        
+        // ✅ SÉCURITÉ : Éviter division par zéro si aucune voix éligible
+        // (cas possible si les voix sont toutes sur des listes non éligibles nationalement)
+        if ($totalVoixEligibles <= 0) {
+            \Log::warning("Arrondissement: Aucune voix pour les listes éligibles - Impossibilité d'attribution", [
+                'sieges_restants' => $siegesRestants,
+                'listes_eligibles_count' => count($listesEligibles),
+            ]);
+            // Retourner sans attribuer les sièges restants
+            return $resultatsListes;
+        }
+        
+        $quotientElectoral = $totalVoixEligibles / $siegesRestants;
+
+        // ✅ ÉTAPE 1 : Attribution au quotient électoral
+        $siegesQuotient = [];
+        $siegesAttribuesQuotient = 0;
+
+        foreach ($listesEligibles as $entiteId => $listeData) {
+            $voix = (int) ($listeData['voix'] ?? 0);
+            $siegesObtenus = intval($voix / $quotientElectoral); // Partie entière
+            
+            $siegesQuotient[$entiteId] = $siegesObtenus;
+            $siegesAttribuesQuotient += $siegesObtenus;
+        }
+
+        // ✅ ÉTAPE 2 : Plus forte moyenne pour le reste
+        $siegesResteApresQuotient = $siegesRestants - $siegesAttribuesQuotient;
+
+        // ✅ IMPORTANT : Liste majoritaire commence à 0 dans cette phase
+        // On ne compte PAS les sièges de la prime majoritaire
+        $siegesActuelsPourMoyenne = [];
+        foreach ($listesEligibles as $entiteId => $data) {
+            $siegesActuelsPourMoyenne[$entiteId] = $siegesQuotient[$entiteId] ?? 0;
+        }
+
+        for ($i = 0; $i < $siegesResteApresQuotient; $i++) {
+            $maxMoyenne = -1;
+            $gagnantId = null;
+
+            foreach ($listesEligibles as $entiteId => $data) {
+                $voix = (int) ($data['voix'] ?? 0);
+                $sieges = (int) ($siegesActuelsPourMoyenne[$entiteId] ?? 0);
+
+                $moyenne = $voix / ($sieges + 1);
+
+                // Article 187.4 : En cas d'égalité, plus grand nombre de suffrages
+                $voixGagnant = $gagnantId ? (int) ($listesEligibles[$gagnantId]['voix'] ?? 0) : -1;
+
+                if ($moyenne > $maxMoyenne || ($moyenne == $maxMoyenne && $voix > $voixGagnant)) {
+                    $maxMoyenne = $moyenne;
+                    $gagnantId = $entiteId;
+                }
+            }
+
+            if ($gagnantId !== null) {
+                $siegesActuelsPourMoyenne[$gagnantId]++;
+            }
+        }
+
+        // ✅ Appliquer les sièges finaux
+        foreach ($listesEligibles as $entiteId => $data) {
+            $siegesTotaux = ($siegesActuelsPourMoyenne[$entiteId] ?? 0);
+            $resultatsListes[$entiteId]['sieges'] = (int) ($resultatsListes[$entiteId]['sieges'] ?? 0) + $siegesTotaux;
+        }
+
+        return $resultatsListes;
     }
 
     /**
-     * Article 187.3-187.4 : Plus forte moyenne (D'Hondt)
+     * ✅ Article 187.5 : Proportionnelle intégrale (pas de liste majoritaire)
+     * Méthode conforme (Slides 17-21)
+     * 
+     * ⚠️ IMPORTANT : Le QE utilise uniquement les voix des listes éligibles ≥10% local
      */
-    private function repartitionPlusForteMoyenne(array $listesEligibles, int $nombreSieges, array $tousResultats): array
-    {
+    private function repartitionProportionnelleComplete(
+        array $listesEligibles, 
+        int $nombreSieges, 
+        array $tousResultats,
+        int $totalVoixArrondissement
+    ): array {
+        // ✅ FALLBACK EXPLICITE : Si aucune liste éligible (déjà filtré en amont normalement)
+        if (empty($listesEligibles)) {
+            \Log::warning("Arrondissement: Aucune liste éligible pour proportionnelle intégrale", [
+                'sieges_total' => $nombreSieges,
+                'total_voix' => $totalVoixArrondissement,
+            ]);
+            return $tousResultats;
+        }
+        
+        // ✅ Calculer le total des voix des listes éligibles uniquement
+        $totalVoixEligibles = 0;
+        foreach ($listesEligibles as $data) {
+            $totalVoixEligibles += (int) ($data['voix'] ?? 0);
+        }
+        
+        // ✅ SÉCURITÉ : Éviter division par zéro si aucune voix éligible
+        if ($totalVoixEligibles <= 0) {
+            \Log::warning("Arrondissement: Aucune voix pour les listes éligibles - Impossibilité d'attribution proportionnelle", [
+                'sieges_total' => $nombreSieges,
+                'listes_eligibles_count' => count($listesEligibles),
+            ]);
+            return $tousResultats;
+        }
+        
+        // ✅ ÉTAPE 1 : Attribution au quotient électoral
+        // Quotient = Total suffrages des listes éligibles / Sièges total
+        $quotientElectoral = $totalVoixEligibles / $nombreSieges;
+
         $siegesActuels = [];
+        $siegesAttribuesQuotient = 0;
+
         foreach ($listesEligibles as $entiteId => $data) {
-            $siegesActuels[$entiteId] = (int) ($tousResultats[$entiteId]['sieges'] ?? 0);
+            $voix = (int) ($data['voix'] ?? 0);
+            $siegesObtenus = intval($voix / $quotientElectoral); // Partie entière
+            
+            $siegesActuels[$entiteId] = $siegesObtenus;
+            $tousResultats[$entiteId]['sieges'] = $siegesObtenus;
+            $siegesAttribuesQuotient += $siegesObtenus;
         }
 
-        for ($i = 0; $i < $nombreSieges; $i++) {
+        // ✅ ÉTAPE 2 : Plus forte moyenne pour le reste
+        $siegesRestants = $nombreSieges - $siegesAttribuesQuotient;
+
+        for ($i = 0; $i < $siegesRestants; $i++) {
             $maxMoyenne = -1;
             $gagnantId = null;
 
@@ -467,7 +703,7 @@ class ResultatsCommunalesService
                 $voix = (int) ($data['voix'] ?? 0);
                 $sieges = (int) ($siegesActuels[$entiteId] ?? 0);
 
-                $moyenne = $sieges >= 0 ? ($voix / ($sieges + 1)) : 0;
+                $moyenne = $voix / ($sieges + 1);
 
                 // Article 187.4 : En cas d'égalité, plus grand nombre de suffrages
                 $voixGagnant = $gagnantId ? (int) ($listesEligibles[$gagnantId]['voix'] ?? 0) : -1;
@@ -793,6 +1029,72 @@ class ResultatsCommunalesService
         }
 
         return $csv;
+    }
+
+    /**
+     * Déterminer la méthode d'attribution utilisée pour un arrondissement
+     */
+    private function determinerMethodeAttribution(array $resultatsListes, int $siegesArrondissement): array
+    {
+        if ($siegesArrondissement === 1) {
+            return [
+                'type' => 'uninominal',
+                'description' => 'Scrutin uninominal majoritaire (Art.186)',
+                'details' => 'Le candidat ayant obtenu le plus de voix est élu',
+            ];
+        }
+
+        // Extraire les infos de méthode si présentes
+        if (isset($resultatsListes['_methode_globale'])) {
+            $methode = $resultatsListes['_methode_globale'];
+            
+            if ($methode['type'] === 'majorite_50') {
+                return [
+                    'type' => 'majorite_50',
+                    'description' => 'Liste majoritaire ≥50% (Art.187.1)',
+                    'details' => sprintf(
+                        'Prime majoritaire: %d sièges | Sièges restants: %d | QE: %.2f',
+                        $methode['sieges_majorite'],
+                        $methode['sieges_restants'],
+                        $methode['quotient_electoral']
+                    ),
+                    'quotient_electoral' => $methode['quotient_electoral'],
+                    'sieges_majorite' => $methode['sieges_majorite'],
+                    'sieges_restants' => $methode['sieges_restants'],
+                ];
+            }
+            
+            if ($methode['type'] === 'majorite_40') {
+                return [
+                    'type' => 'majorite_40',
+                    'description' => 'Liste majoritaire ≥40% (Art.187.2)',
+                    'details' => sprintf(
+                        'Prime majoritaire: %d sièges | Sièges restants: %d | QE: %.2f',
+                        $methode['sieges_majorite'],
+                        $methode['sieges_restants'],
+                        $methode['quotient_electoral']
+                    ),
+                    'quotient_electoral' => $methode['quotient_electoral'],
+                    'sieges_majorite' => $methode['sieges_majorite'],
+                    'sieges_restants' => $methode['sieges_restants'],
+                ];
+            }
+            
+            if ($methode['type'] === 'proportionnelle_integrale') {
+                return [
+                    'type' => 'proportionnelle_integrale',
+                    'description' => 'Représentation proportionnelle intégrale (Art.187.5)',
+                    'details' => sprintf('Quotient électoral: %.2f', $methode['quotient_electoral']),
+                    'quotient_electoral' => $methode['quotient_electoral'],
+                ];
+            }
+        }
+
+        return [
+            'type' => 'inconnu',
+            'description' => 'Méthode non déterminée',
+            'details' => '',
+        ];
     }
 
     /**

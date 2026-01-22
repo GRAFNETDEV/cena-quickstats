@@ -156,6 +156,31 @@
             page-break-after: avoid;
         }
 
+        /* ✅ Méthode d'attribution (nouvelle section) */
+        .methode-box{
+            margin: 4px 0;
+            padding: 5px 6px;
+            background: #e3f2fd;
+            border: 1px solid #90caf9;
+            border-radius: 3px;
+            font-size: 7.5pt;
+            page-break-inside: avoid;
+        }
+        .methode-title{
+            font-weight: 900;
+            color: #1565c0;
+            margin-bottom: 2px;
+        }
+        .methode-details{
+            color: #424242;
+            line-height: 1.3;
+        }
+        .methode-qe{
+            font-weight: 900;
+            color: #0d47a1;
+            margin-top: 2px;
+        }
+
         /* Table détails arrondissement */
         .table-arr{
             font-size: 7.4pt;
@@ -351,6 +376,7 @@
                         foreach($listes as $entiteId => $liste){
                             if ((int)($liste['sieges'] ?? 0) > 0) $gagnants[$entiteId] = $liste;
                         }
+                        $methode = $arr['methode_attribution'] ?? null;
                     @endphp
 
                     <div class="arr-block">
@@ -369,6 +395,21 @@
                                 </div>
                             </div>
                         </div>
+
+                        {{-- ✅ Méthode d'attribution (nouvelle section) --}}
+                        @if($methode && !empty($methode['description']))
+                            <div class="methode-box">
+                                <div class="methode-title">📐 {{ $methode['description'] }}</div>
+                                @if(!empty($methode['details']))
+                                    <div class="methode-details">{{ $methode['details'] }}</div>
+                                @endif
+                                @if(isset($methode['quotient_electoral']) && $methode['quotient_electoral'] > 0)
+                                    <div class="methode-qe">
+                                        Quotient Électoral : {{ number_format($methode['quotient_electoral'], 2, ',', ' ') }}
+                                    </div>
+                                @endif
+                            </div>
+                        @endif
 
                         @if(!empty($gagnants))
                             <table class="table-arr">
@@ -482,6 +523,8 @@
         • Les résultats sont basés sur les PV validés/publiés avec déduplication par arrondissement et village.<br>
         • La répartition des sièges suit les Articles 183-187 de la loi électorale béninoise.<br>
         • Seuil d'éligibilité nationale : 10% des suffrages exprimés au plan national (Art.184).<br>
+        • Les méthodes d'attribution (uninominal, majorité, proportionnelle) et quotients électoraux sont indiqués pour chaque arrondissement.<br>
+        • <strong>Quotient Électoral (QE)</strong> : Calculé en divisant le total des suffrages des listes éligibles (≥10% local) par le nombre de sièges à répartir (Slide 12).<br>
         • Date de génération : {{ date('d/m/Y à H:i:s') }}
     </p>
 </div>

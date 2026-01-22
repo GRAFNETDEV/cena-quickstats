@@ -373,6 +373,7 @@
                                                 $details = $arrData['details_repartition'] ?? [];
                                                 $arrondissement = $details['arrondissement'] ?? null;
                                                 $populationArr = $arrondissement ? $arrondissement->population : 0;
+                                                $methode = $arrData['methode_attribution'] ?? null;
                                             @endphp
                                             <div class="rounded-lg border-2 border-benin-green-200 overflow-hidden" x-data="{ arrOpen: false }">
 
@@ -399,95 +400,157 @@
                                                     </div>
                                                 </div>
 
-                                                <div x-show="arrOpen" x-collapse class="p-3 bg-white">
-                                                    @if(!empty($arrData['listes']))
-                                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                                            @foreach($arrData['listes'] as $entiteId => $listeData)
-                                                                @if(($listeData['sieges'] ?? 0) > 0)
-                                                                    @php
-                                                                        $entite = collect($compilation['data']['entites'])->firstWhere('id', (int)$entiteId);
-                                                                    @endphp
-                                                                    <div class="bg-gradient-to-br from-benin-green-50 to-white rounded-lg p-3 border border-benin-green-300">
-                                                                        <div class="flex justify-between items-start mb-2">
-                                                                            <div class="flex-1">
-                                                                                <div class="font-bold text-gray-900 flex items-center gap-1">
-                                                                                    <i class="fas fa-flag text-benin-green-600 text-xs"></i>
-                                                                                    {{ $entite->sigle ?: $entite->nom }}
-                                                                                </div>
-                                                                                <div class="text-xs text-gray-600 mt-1">
-                                                                                    Voix: <b>{{ number_format($listeData['voix'] ?? 0) }}</b>
-                                                                                    ({{ number_format($listeData['pourcentage'] ?? 0, 2) }}%)
-                                                                                </div>
+                                                <div x-show="arrOpen" x-collapse class="bg-white">
+                                                    
+                                                    {{-- ✅ AFFICHAGE MÉTHODE ET QUOTIENT --}}
+                                                    @if($methode)
+                                                        <div class="p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border-b-2 border-indigo-200">
+                                                            <div class="flex items-start gap-3">
+                                                                <div class="flex-shrink-0">
+                                                                    <i class="fas fa-calculator text-indigo-600 text-lg"></i>
+                                                                </div>
+                                                                <div class="flex-1">
+                                                                    <div class="font-bold text-gray-900 text-sm mb-1">
+                                                                        📐 {{ $methode['description'] ?? 'Méthode d\'attribution' }}
+                                                                    </div>
+                                                                    @if(!empty($methode['details']))
+                                                                        <div class="text-xs text-gray-700 mb-2">
+                                                                            {{ $methode['details'] }}
+                                                                        </div>
+                                                                    @endif
+                                                                    
+                                                                    @if(isset($methode['quotient_electoral']) && $methode['quotient_electoral'] > 0)
+                                                                        <div class="inline-flex items-center gap-2 px-3 py-1.5 bg-white rounded-lg border border-indigo-300 shadow-sm">
+                                                                            <span class="text-xs font-semibold text-gray-600">Quotient Électoral:</span>
+                                                                            <span class="text-sm font-bold text-indigo-600">
+                                                                                {{ number_format($methode['quotient_electoral'], 2) }}
+                                                                            </span>
+                                                                            <span class="text-xs text-gray-500">
+                                                                                (suffrages listes éligibles ≥10% / 
+                                                                                @if(isset($methode['sieges_restants']))
+                                                                                    {{ $methode['sieges_restants'] }} sièges restants)
+                                                                                @else
+                                                                                    {{ $arrData['sieges_arrondissement'] ?? 0 }} sièges)
+                                                                                @endif
+                                                                            </span>
+                                                                        </div>
+                                                                    @endif
+                                                                    
+                                                                    @if(isset($methode['sieges_majorite']) && isset($methode['sieges_restants']))
+                                                                        <div class="mt-2 flex gap-3 text-xs">
+                                                                            <div class="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 rounded">
+                                                                                <i class="fas fa-trophy"></i>
+                                                                                <span>Prime: {{ $methode['sieges_majorite'] }} sièges</span>
                                                                             </div>
-                                                                            <div class="text-right">
-                                                                                <div class="text-2xl font-bold text-benin-green-600">
-                                                                                    {{ $listeData['sieges'] }}
-                                                                                </div>
-                                                                                <div class="text-xs text-gray-500">siège(s)</div>
+                                                                            <div class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-800 rounded">
+                                                                                <i class="fas fa-balance-scale"></i>
+                                                                                <span>À répartir: {{ $methode['sieges_restants'] }} sièges</span>
                                                                             </div>
                                                                         </div>
+                                                                    @endif
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    @endif
 
-                                                                        {{-- Mode d'attribution --}}
+                                                    {{-- Listes et candidats --}}
+                                                    <div class="p-3">
+                                                        @if(!empty($arrData['listes']))
+                                                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                                @foreach($arrData['listes'] as $entiteId => $listeData)
+                                                                    @if(($listeData['sieges'] ?? 0) > 0)
                                                                         @php
-                                                                            $mode = '';
-                                                                            $siegesArr = $arrData['sieges_arrondissement'] ?? 0;
-                                                                            $pct = $listeData['pourcentage'] ?? 0;
-                                                                            if ($siegesArr == 1) {
-                                                                                $mode = 'Uninominal (Art.186)';
-                                                                            } elseif ($pct >= 50) {
-                                                                                $mode = 'Majorité ≥50% (Art.187.1)';
-                                                                            } elseif ($pct >= 40) {
-                                                                                $mode = 'Majorité ≥40% (Art.187.2)';
-                                                                            } else {
-                                                                                $mode = 'Proportionnelle (Art.187.3)';
-                                                                            }
+                                                                            $entite = collect($compilation['data']['entites'])->firstWhere('id', (int)$entiteId);
                                                                         @endphp
-                                                                        <div class="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded mt-2">
-                                                                            <i class="fas fa-info-circle"></i> {{ $mode }}
-                                                                        </div>
-
-                                                                        {{-- Candidats élus --}}
-                                                                        @if(!empty($listeData['candidats']))
-                                                                            <div class="mt-3 pt-2 border-t border-benin-green-200">
-                                                                                <div class="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1">
-                                                                                    <i class="fas fa-user-check text-benin-green-600"></i>
-                                                                                    Candidats élus (Art.187.7) :
+                                                                        <div class="bg-gradient-to-br from-benin-green-50 to-white rounded-lg p-3 border border-benin-green-300">
+                                                                            <div class="flex justify-between items-start mb-2">
+                                                                                <div class="flex-1">
+                                                                                    <div class="font-bold text-gray-900 flex items-center gap-1">
+                                                                                        <i class="fas fa-flag text-benin-green-600 text-xs"></i>
+                                                                                        {{ $entite->sigle ?: $entite->nom }}
+                                                                                    </div>
+                                                                                    <div class="text-xs text-gray-600 mt-1">
+                                                                                        Voix: <b>{{ number_format($listeData['voix'] ?? 0) }}</b>
+                                                                                        ({{ number_format($listeData['pourcentage'] ?? 0, 2) }}%)
+                                                                                    </div>
                                                                                 </div>
-                                                                                <div class="space-y-1">
-                                                                                    @foreach($listeData['candidats'] as $candidat)
-                                                                                        <div class="bg-white rounded p-2 border border-benin-green-100">
-                                                                                            <div class="flex items-start gap-2">
-                                                                                                <div class="w-6 h-6 bg-benin-green-600 text-white rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">
-                                                                                                    {{ $candidat['position'] ?? '?' }}
-                                                                                                </div>
-                                                                                                <div class="flex-1 min-w-0">
-                                                                                                    <div class="font-bold text-xs text-gray-900 truncate" title="{{ $candidat['titulaire'] ?? 'Non renseigné' }}">
-                                                                                                        👤 {{ $candidat['titulaire'] ?? 'Non renseigné' }}
+                                                                                <div class="text-right">
+                                                                                    <div class="text-2xl font-bold text-benin-green-600">
+                                                                                        {{ $listeData['sieges'] }}
+                                                                                    </div>
+                                                                                    <div class="text-xs text-gray-500">siège(s)</div>
+                                                                                </div>
+                                                                            </div>
+
+                                                                            {{-- Mode d'attribution individuel (badge) --}}
+                                                                            @php
+                                                                                $mode = '';
+                                                                                $badgeColor = 'blue';
+                                                                                $siegesArr = $arrData['sieges_arrondissement'] ?? 0;
+                                                                                $pct = $listeData['pourcentage'] ?? 0;
+                                                                                
+                                                                                if ($siegesArr == 1) {
+                                                                                    $mode = 'Uninominal';
+                                                                                    $badgeColor = 'purple';
+                                                                                } elseif ($pct >= 50 && isset($methode['type']) && $methode['type'] === 'majorite_50') {
+                                                                                    $mode = 'Majorité ≥50%';
+                                                                                    $badgeColor = 'green';
+                                                                                } elseif ($pct >= 40 && isset($methode['type']) && $methode['type'] === 'majorite_40') {
+                                                                                    $mode = 'Majorité ≥40%';
+                                                                                    $badgeColor = 'emerald';
+                                                                                } else {
+                                                                                    $mode = 'Proportionnelle';
+                                                                                    $badgeColor = 'blue';
+                                                                                }
+                                                                            @endphp
+                                                                            <div class="text-xs text-{{ $badgeColor }}-600 bg-{{ $badgeColor }}-50 px-2 py-1 rounded mt-2">
+                                                                                <i class="fas fa-info-circle"></i> {{ $mode }}
+                                                                            </div>
+
+                                                                            {{-- Candidats élus --}}
+                                                                            @if(!empty($listeData['candidats']))
+                                                                                <div class="mt-3 pt-2 border-t border-benin-green-200">
+                                                                                    <div class="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1">
+                                                                                        <i class="fas fa-user-check text-benin-green-600"></i>
+                                                                                        Candidats élus (Art.187.7) :
+                                                                                    </div>
+                                                                                    <div class="space-y-1">
+                                                                                        @foreach($listeData['candidats'] as $candidat)
+                                                                                            <div class="bg-white rounded p-2 border border-benin-green-100">
+                                                                                                <div class="flex items-start gap-2">
+                                                                                                    <div class="w-6 h-6 bg-benin-green-600 text-white rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">
+                                                                                                        {{ $candidat['position'] ?? '?' }}
                                                                                                     </div>
-                                                                                                    @if(!empty($candidat['suppleant']))
-                                                                                                        <div class="text-xs text-gray-600 truncate" title="Suppléant : {{ $candidat['suppleant'] }}">
-                                                                                                            Suppléant : {{ $candidat['suppleant'] }}
+                                                                                                    <div class="flex-1 min-w-0">
+                                                                                                        <div class="font-bold text-xs text-gray-900 truncate" title="{{ $candidat['titulaire'] ?? 'Non renseigné' }}">
+                                                                                                            👤 {{ $candidat['titulaire'] ?? 'Non renseigné' }}
                                                                                                         </div>
-                                                                                                    @endif
-                                                                                                    @if(!empty($candidat['no']))
-                                                                                                        <div class="text-xs text-gray-500">
-                                                                                                            N° {{ $candidat['no'] }}
-                                                                                                        </div>
-                                                                                                    @endif
+                                                                                                        @if(!empty($candidat['suppleant']))
+                                                                                                            <div class="text-xs text-gray-600 truncate" title="Suppléant : {{ $candidat['suppleant'] }}">
+                                                                                                                Suppléant : {{ $candidat['suppleant'] }}
+                                                                                                            </div>
+                                                                                                        @endif
+                                                                                                        @if(!empty($candidat['no']))
+                                                                                                            <div class="text-xs text-gray-500">
+                                                                                                                N° {{ $candidat['no'] }}
+                                                                                                            </div>
+                                                                                                        @endif
+                                                                                                    </div>
                                                                                                 </div>
                                                                                             </div>
-                                                                                        </div>
-                                                                                    @endforeach
+                                                                                        @endforeach
+                                                                                    </div>
                                                                                 </div>
-                                                                            </div>
-                                                                        @endif
-                                                                    </div>
-                                                                @endif
-                                                            @endforeach
-                                                        </div>
-                                                    @else
-                                                        <p class="text-sm text-gray-500 italic">Aucun siège attribué dans cet arrondissement</p>
-                                                    @endif
+                                                                            @endif
+                                                                        </div>
+                                                                    @endif
+                                                                @endforeach
+                                                            </div>
+                                                        @else
+                                                            <p class="text-sm text-gray-500 italic">Aucun siège attribué dans cet arrondissement</p>
+                                                        @endif
+                                                    </div>
+
                                                 </div>
 
                                             </div>

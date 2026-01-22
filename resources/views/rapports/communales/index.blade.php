@@ -295,6 +295,28 @@
                                                         Voix: <b>{{ number_format($arr['total_voix'], 0, ',', ' ') }}</b>
                                                     </div>
                                                 </div>
+                                                
+                                                {{-- ✅ Affichage de la méthode d'attribution --}}
+                                                @if(!empty($arr['methode_attribution']))
+                                                    @php $methode = $arr['methode_attribution']; @endphp
+                                                    <div class="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+                                                        <div class="flex items-start gap-2">
+                                                            <i class="fas fa-calculator text-blue-600 mt-0.5"></i>
+                                                            <div class="flex-1">
+                                                                <div class="font-semibold text-blue-900">{{ $methode['description'] ?? '' }}</div>
+                                                                @if(!empty($methode['details']))
+                                                                    <div class="text-blue-700 mt-1">{{ $methode['details'] }}</div>
+                                                                @endif
+                                                                @if(isset($methode['quotient_electoral']) && $methode['quotient_electoral'] > 0)
+                                                                    <div class="mt-1 font-bold text-blue-800">
+                                                                        QE: {{ number_format($methode['quotient_electoral'], 2, ',', ' ') }}
+                                                                        <span class="font-normal text-xs">(suffrages listes éligibles ≥10% / sièges à répartir)</span>
+                                                                    </div>
+                                                                @endif
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                @endif
                                             </div>
 
                                             @if(!empty($arr['listes']))
@@ -386,6 +408,10 @@
                     <li class="flex items-center gap-2">
                         <i class="fas fa-check text-blue-600"></i>
                         Tous les détails jusqu'au niveau arrondissement avec les candidats élus
+                    </li>
+                    <li class="flex items-center gap-2">
+                        <i class="fas fa-check text-blue-600"></i>
+                        Les méthodes d'attribution et quotients électoraux pour chaque arrondissement
                     </li>
                     <li class="flex items-center gap-2">
                         <i class="fas fa-check text-blue-600"></i>
