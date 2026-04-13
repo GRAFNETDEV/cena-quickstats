@@ -193,6 +193,11 @@
                             <i class="fas fa-building w-4"></i>
                             <span>Élections Communales</span>
                         </a>
+                        <a href="{{ route('rapports.presidentielle') }}"
+                           class="flex items-center space-x-2 px-4 py-2 rounded text-sm hover:bg-benin-green-700/40 {{ request()->is('rapports/presidentielle*') ? 'bg-benin-green-700/50' : '' }}">
+                            <i class="fas fa-landmark w-4"></i>
+                            <span>Élection Présidentielle</span>
+                        </a>
                     </div>
                 </div>
                 

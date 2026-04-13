@@ -83,7 +83,14 @@
             <div>
                 <h3 class="font-semibold text-benin-green-900 mb-1">📌 Vue Globale des Villages</h3>
                 <div class="text-sm text-benin-green-800 space-y-1">
-                    <p><strong>Villages inscrits :</strong> Total des villages hors diaspora</p>
+                    <p>
+                        <strong>Villages inscrits :</strong>
+                        @if(!empty($stats['diaspora_incluse']))
+                            Total des villages (diaspora incluse)
+                        @else
+                            Total des villages hors diaspora
+                        @endif
+                    </p>
                     <p><strong>Villages saisis :</strong> Villages présents dans au moins un PV validé</p>
                     <p><strong>Taux de couverture :</strong> Pourcentage de villages saisis par rapport aux villages inscrits</p>
                 </div>
@@ -99,7 +106,13 @@
                 <div>
                     <p class="text-sm font-medium text-gray-600">Villages Inscrits</p>
                     <p class="text-3xl font-bold text-gray-900 mt-2">{{ number_format($stats['nombre_villages_inscrits'] ?? 0) }}</p>
-                    <p class="text-xs text-gray-500 mt-1">Hors diaspora</p>
+                    <p class="text-xs text-gray-500 mt-1">
+                        @if(!empty($stats['diaspora_incluse']))
+                            Diaspora incluse
+                        @else
+                            Hors diaspora
+                        @endif
+                    </p>
                 </div>
                 <div class="bg-blue-100 rounded-full p-4">
                     <i class="fas fa-map-marked-alt text-blue-600 text-2xl"></i>

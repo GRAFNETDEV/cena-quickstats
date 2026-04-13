@@ -182,6 +182,7 @@ class RapportCommunalesController extends Controller
                 'eligible_national' => (bool)($compilation['eligibilite'][$e->id]['eligible'] ?? false),
                 'pct_national' => (float)($compilation['eligibilite'][$e->id]['pourcentage_national'] ?? 0),
                 'sieges' => (int)($totSiegesScope[$e->id] ?? 0),
+                'communes_majoritaires' => (int)($compilation['communes_majoritaires'][$e->id] ?? 0),  // ✅ NOUVEAU
             ];
         }
 

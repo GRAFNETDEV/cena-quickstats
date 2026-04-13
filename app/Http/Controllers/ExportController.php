@@ -20,6 +20,40 @@ class ExportController extends Controller
         $this->communalesService = $communalesService;
     }
 
+    private function typeElection($election): string
+    {
+        $type = strtolower((string) ($election->type ?? ''));
+
+        if ($type === '' && !empty($election->type_election_id)) {
+            $typeRef = DB::table('types_election')
+                ->where('id', (int) $election->type_election_id)
+                ->value('code');
+            $type = strtolower((string) ($typeRef ?? ''));
+        }
+
+        $typeNormalise = strtr($type, [
+            'é' => 'e', 'è' => 'e', 'ê' => 'e', 'ë' => 'e',
+            'à' => 'a', 'â' => 'a',
+            'î' => 'i', 'ï' => 'i',
+            'ô' => 'o', 'ö' => 'o',
+            'ù' => 'u', 'û' => 'u', 'ü' => 'u',
+            'ç' => 'c',
+        ]);
+
+        if (str_contains($typeNormalise, 'president')) {
+            return 'presidentielle';
+        }
+        if (str_contains($typeNormalise, 'commun')) {
+            return 'communale';
+        }
+        return 'legislative';
+    }
+
+    private function includeDiaspora($election): bool
+    {
+        return $this->typeElection($election) === 'presidentielle';
+    }
+
     /**
      * Récupérer l'élection active depuis la session
      */
@@ -527,10 +561,22 @@ class ExportController extends Controller
     public function villageNonSaisisCsv(Request $request)
     {
         $electionId = $request->get('election_id') ?: session('election_active');
-        
+
         if (!$electionId) {
             return response('Aucune élection sélectionnée', 400);
         }
+
+        // Déterminer si on doit inclure la diaspora
+        $election = DB::table('elections')->find($electionId);
+        $diasporaIncluded = $election ? $this->includeDiaspora($election) : false;
+
+        // Construire le filtre diaspora conditionnel
+        $diasporaFilter = $diasporaIncluded
+            ? ''
+            : "WHERE dep.nom NOT ILIKE '%diaspora%'
+                    AND com.nom NOT ILIKE '%diaspora%'
+                    AND a.nom NOT ILIKE '%diaspora%'
+                    AND vq.nom NOT ILIKE '%diaspora%'";
 
         // Récupérer les données
         $villagesNonSaisis = DB::select("
@@ -574,11 +620,7 @@ class ExportController extends Controller
                 JOIN public.arrondissements a ON a.id = vq.arrondissement_id
                 JOIN public.communes com ON com.id = a.commune_id
                 JOIN public.departements dep ON dep.id = com.departement_id
-                WHERE
-                    dep.nom NOT ILIKE '%diaspora%'
-                    AND com.nom NOT ILIKE '%diaspora%'
-                    AND a.nom NOT ILIKE '%diaspora%'
-                    AND vq.nom NOT ILIKE '%diaspora%'
+                {$diasporaFilter}
             )
             SELECT
                 r.departement_nom AS \"Département\",
@@ -716,6 +758,61 @@ class ExportController extends Controller
 
         $csv = $this->communalesService->exporterDetailsParArrondissement($electionId);
         $filename = 'details_arrondissements_' . date('Y-m-d_His') . '.csv';
+
+        return response($csv, 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+        ]);
+    }
+
+
+    /**
+     * ✅ NOUVEAU : Export CSV - Liste des candidats élus par parti
+     * Liste consolidée avec localisation complète
+     */
+    public function communalesCandidatsElusCsv(Request $request)
+    {
+        $electionId = $request->get('election_id') ?: session('election_active');
+
+        if (!$electionId) {
+            $election = $this->electionActive();
+            $electionId = $election ? $election->id : null;
+        }
+
+        if (!$electionId) abort(404, "Aucune élection trouvée");
+
+        $election = DB::table('elections')->find($electionId);
+        if (!$election) abort(404, "Élection introuvable");
+
+        $csv = $this->communalesService->exporterCandidatsElusCSV($electionId);
+        $filename = 'candidats_elus_communales_' . date('Y-m-d_His') . '.csv';
+
+        return response($csv, 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+        ]);
+    }
+
+    /**
+     * ✅ NOUVEAU : Export CSV - Liste détaillée des candidats élus
+     * Avec informations enrichies (quotient, mode attribution, etc.)
+     */
+    public function communalesCandidatsElusDetaillesCsv(Request $request)
+    {
+        $electionId = $request->get('election_id') ?: session('election_active');
+
+        if (!$electionId) {
+            $election = $this->electionActive();
+            $electionId = $election ? $election->id : null;
+        }
+
+        if (!$electionId) abort(404, "Aucune élection trouvée");
+
+        $election = DB::table('elections')->find($electionId);
+        if (!$election) abort(404, "Élection introuvable");
+
+        $csv = $this->communalesService->exporterCandidatsElusDetaillesCSV($electionId);
+        $filename = 'candidats_elus_detailles_communales_' . date('Y-m-d_His') . '.csv';
 
         return response($csv, 200, [
             'Content-Type' => 'text/csv; charset=UTF-8',

@@ -46,7 +46,7 @@ class ParametresController extends Controller
     }
 
     /**
-     * ✅ TOP UTILISATEURS - Qui saisit le plus
+     * TOP UTILISATEURS - Qui saisit le plus
      */
     public function topUtilisateurs(Request $request)
     {
@@ -89,13 +89,23 @@ class ParametresController extends Controller
         $election = $this->electionActive();
         abort_if(!$election, 404, "Aucune élection trouvée");
 
-        $type = $request->get('type'); // 'code', 'village', 'arrondissement', 'commune', 'departement'
-        $valeur = $request->get('valeur');
+        $type = $request->get('type');
+        $valeur = trim((string) $request->get('valeur', ''));
+        $statut = trim((string) $request->get('statut', ''));
+        $limit = (int) $request->get('limit', 50);
+        $limit = max(10, min(200, $limit));
 
-        if (!$type || !$valeur) {
+        if ($type === null || $valeur === '') {
             return response()->json([
                 'success' => false,
                 'message' => 'Type et valeur requis',
+            ], 400);
+        }
+
+        if (!in_array($type, ['code', 'village', 'arrondissement', 'commune', 'departement'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Type de recherche invalide',
             ], 400);
         }
 
@@ -110,63 +120,115 @@ class ParametresController extends Controller
                 'pv.election_id',
                 'pv.created_at',
                 'pv.updated_at',
+                'pv.observations',
                 DB::raw("CONCAT(COALESCE(u.nom,''), ' ', COALESCE(u.prenom,'')) as saisi_par"),
+                DB::raw("(
+                    SELECT a.nom
+                    FROM public.arrondissements a
+                    WHERE a.id = pv.niveau_id::int
+                    LIMIT 1
+                ) as arrondissement_nom"),
+                DB::raw("(
+                    SELECT c.nom
+                    FROM public.arrondissements a
+                    JOIN public.communes c ON c.id = a.commune_id
+                    WHERE a.id = pv.niveau_id::int
+                    LIMIT 1
+                ) as commune_nom"),
+                DB::raw("(
+                    SELECT d.nom
+                    FROM public.arrondissements a
+                    JOIN public.communes c ON c.id = a.commune_id
+                    JOIN public.departements d ON d.id = c.departement_id
+                    WHERE a.id = pv.niveau_id::int
+                    LIMIT 1
+                ) as departement_nom"),
+                DB::raw("(
+                    SELECT COUNT(*)
+                    FROM public.pv_lignes pl
+                    WHERE pl.proces_verbal_id = pv.id
+                ) as nb_lignes"),
             ])
             ->leftJoin('users as u', 'u.id', '=', 'pv.saisi_par_user_id')
             ->where('pv.election_id', $election->id);
 
         switch ($type) {
             case 'code':
-                $query->where('pv.code', 'ILIKE', "%{$valeur}%");
+                $query->where(function ($q) use ($valeur) {
+                    $q->where('pv.code', 'ILIKE', "%{$valeur}%")
+                        ->orWhere('pv.numero_pv', 'ILIKE', "%{$valeur}%");
+                });
                 break;
 
             case 'village':
-                $query->join('pv_lignes as pl', 'pl.proces_verbal_id', '=', 'pv.id')
-                    ->join('villages_quartiers as vq', 'vq.id', '=', 'pl.village_quartier_id')
-                    ->where('vq.nom', 'ILIKE', "%{$valeur}%")
-                    ->distinct();
+                $query->whereExists(function ($sq) use ($valeur) {
+                    $sq->select(DB::raw(1))
+                        ->from('pv_lignes as pl')
+                        ->join('villages_quartiers as vq', 'vq.id', '=', 'pl.village_quartier_id')
+                        ->whereColumn('pl.proces_verbal_id', 'pv.id')
+                        ->where('vq.nom', 'ILIKE', "%{$valeur}%");
+                });
                 break;
 
             case 'arrondissement':
-                $query->join('arrondissements as a', function($join) {
-                    $join->on('a.id', '=', 'pv.niveau_id')
-                        ->where('pv.niveau', '=', 'arrondissement');
-                })
-                ->where('a.nom', 'ILIKE', "%{$valeur}%");
+                $query->whereExists(function ($sq) use ($valeur) {
+                    $sq->select(DB::raw(1))
+                        ->from('arrondissements as a')
+                        ->whereRaw('a.id = pv.niveau_id::int')
+                        ->where('a.nom', 'ILIKE', "%{$valeur}%");
+                })->where('pv.niveau', 'arrondissement');
                 break;
 
             case 'commune':
-                $query->join('arrondissements as a', function($join) {
-                    $join->on('a.id', '=', 'pv.niveau_id')
-                        ->where('pv.niveau', '=', 'arrondissement');
-                })
-                ->join('communes as c', 'c.id', '=', 'a.commune_id')
-                ->where('c.nom', 'ILIKE', "%{$valeur}%");
+                $query->whereExists(function ($sq) use ($valeur) {
+                    $sq->select(DB::raw(1))
+                        ->from('arrondissements as a')
+                        ->join('communes as c', 'c.id', '=', 'a.commune_id')
+                        ->whereRaw('a.id = pv.niveau_id::int')
+                        ->where('c.nom', 'ILIKE', "%{$valeur}%");
+                })->where('pv.niveau', 'arrondissement');
                 break;
 
             case 'departement':
-                $query->join('arrondissements as a', function($join) {
-                    $join->on('a.id', '=', 'pv.niveau_id')
-                        ->where('pv.niveau', '=', 'arrondissement');
-                })
-                ->join('communes as c', 'c.id', '=', 'a.commune_id')
-                ->join('departements as d', 'd.id', '=', 'c.departement_id')
-                ->where('d.nom', 'ILIKE', "%{$valeur}%");
+                $query->whereExists(function ($sq) use ($valeur) {
+                    $sq->select(DB::raw(1))
+                        ->from('arrondissements as a')
+                        ->join('communes as c', 'c.id', '=', 'a.commune_id')
+                        ->join('departements as d', 'd.id', '=', 'c.departement_id')
+                        ->whereRaw('a.id = pv.niveau_id::int')
+                        ->where('d.nom', 'ILIKE', "%{$valeur}%");
+                })->where('pv.niveau', 'arrondissement');
                 break;
-
-            default:
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Type de recherche invalide',
-                ], 400);
         }
 
-        $resultats = $query->orderBy('pv.created_at', 'desc')->limit(100)->get();
+        if ($statut !== '' && $statut !== 'all') {
+            $query->where('pv.statut', $statut);
+        }
+
+        $countsByStatus = (clone $query)
+            ->select('pv.statut', DB::raw('COUNT(*) as total'))
+            ->groupBy('pv.statut')
+            ->pluck('total', 'pv.statut')
+            ->toArray();
+
+        $resultats = $query
+            ->orderByDesc('pv.updated_at')
+            ->orderByDesc('pv.created_at')
+            ->limit($limit)
+            ->get();
 
         return response()->json([
             'success' => true,
             'count' => $resultats->count(),
             'data' => $resultats,
+            'meta' => [
+                'type' => $type,
+                'valeur' => $valeur,
+                'statut' => $statut === '' ? 'all' : $statut,
+                'limit' => $limit,
+                'total_matching' => array_sum($countsByStatus),
+                'counts_by_status' => $countsByStatus,
+            ],
         ]);
     }
 
@@ -180,6 +242,27 @@ class ParametresController extends Controller
                 'pv.*',
                 DB::raw("CONCAT(COALESCE(u.nom,''), ' ', COALESCE(u.prenom,'')) as saisi_par_nom"),
                 'u.email as saisi_par_email',
+                DB::raw("(
+                    SELECT a.nom
+                    FROM public.arrondissements a
+                    WHERE a.id = pv.niveau_id::int
+                    LIMIT 1
+                ) as arrondissement_nom"),
+                DB::raw("(
+                    SELECT c.nom
+                    FROM public.arrondissements a
+                    JOIN public.communes c ON c.id = a.commune_id
+                    WHERE a.id = pv.niveau_id::int
+                    LIMIT 1
+                ) as commune_nom"),
+                DB::raw("(
+                    SELECT d.nom
+                    FROM public.arrondissements a
+                    JOIN public.communes c ON c.id = a.commune_id
+                    JOIN public.departements d ON d.id = c.departement_id
+                    WHERE a.id = pv.niveau_id::int
+                    LIMIT 1
+                ) as departement_nom"),
             ])
             ->leftJoin('users as u', 'u.id', '=', 'pv.saisi_par_user_id')
             ->where('pv.id', $id)
@@ -192,7 +275,6 @@ class ParametresController extends Controller
             ], 404);
         }
 
-        // Récupérer les lignes du PV
         $lignes = DB::table('pv_lignes as pl')
             ->select([
                 'pl.*',
@@ -202,7 +284,15 @@ class ParametresController extends Controller
             ->where('pl.proces_verbal_id', $id)
             ->get();
 
-        // Récupérer le niveau associé
+        $resume = DB::table('pv_lignes as pl')
+            ->leftJoin('pv_ligne_resultats as plr', 'plr.pv_ligne_id', '=', 'pl.id')
+            ->where('pl.proces_verbal_id', $id)
+            ->selectRaw('COUNT(DISTINCT pl.id) as nb_lignes')
+            ->selectRaw('COUNT(plr.id) as nb_resultats')
+            ->selectRaw('COALESCE(SUM(plr.nombre_voix), 0) as total_voix')
+            ->selectRaw('COALESCE(SUM(pl.bulletins_nuls), 0) as bulletins_nuls')
+            ->first();
+
         $niveau = null;
         if ($pv->niveau === 'arrondissement' && $pv->niveau_id) {
             $niveau = DB::table('arrondissements')->find($pv->niveau_id);
@@ -212,6 +302,7 @@ class ParametresController extends Controller
             'success' => true,
             'pv' => $pv,
             'lignes' => $lignes,
+            'resume' => $resume,
             'niveau' => $niveau,
         ]);
     }
@@ -275,8 +366,13 @@ class ParametresController extends Controller
     /**
      * ✅ SUPPRIMER DÉFINITIVEMENT UN PV (avec transaction)
      */
-    public function supprimerPv($id)
+    public function supprimerPv(Request $request, $id)
     {
+        $request->validate([
+            'confirmation_code' => 'required|string|max:100',
+            'motif' => 'nullable|string|max:500',
+        ]);
+
         try {
             DB::beginTransaction();
 
@@ -289,7 +385,58 @@ class ParametresController extends Controller
                 ], 404);
             }
 
-            // 1) Supprimer les résultats liés aux lignes du PV
+            $confirmationCode = strtoupper(trim((string) $request->get('confirmation_code')));
+            $codePv = strtoupper(trim((string) ($pv->code ?? '')));
+            if ($confirmationCode === '' || $confirmationCode !== $codePv) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Code de confirmation invalide. Veuillez saisir le code PV exact.',
+                ], 422);
+            }
+
+            $motif = trim((string) $request->get('motif', ''));
+            $user = Auth::user();
+
+            $lignesIds = DB::table('pv_lignes')
+                ->where('proces_verbal_id', $id)
+                ->pluck('id')
+                ->toArray();
+
+            $nbLignes = count($lignesIds);
+            $nbResultats = 0;
+            if (!empty($lignesIds)) {
+                $nbResultats = (int) DB::table('pv_ligne_resultats')
+                    ->whereIn('pv_ligne_id', $lignesIds)
+                    ->count();
+            }
+
+            DB::table('traces')->insert([
+                'user_id' => $user?->id,
+                'pv_id' => $id,
+                'action' => 'suppression_definitive_pv',
+                'ip_address' => $request->ip(),
+                'user_agent' => substr((string) $request->userAgent(), 0, 1000),
+                'donnees_pv' => json_encode([
+                    'pv_id' => $pv->id,
+                    'code' => $pv->code,
+                    'numero_pv' => $pv->numero_pv,
+                    'statut' => $pv->statut,
+                    'niveau' => $pv->niveau,
+                    'niveau_id' => $pv->niveau_id,
+                    'election_id' => $pv->election_id,
+                    'created_at' => $pv->created_at,
+                    'updated_at' => $pv->updated_at,
+                ]),
+                'metadata' => json_encode([
+                    'motif' => $motif,
+                    'nb_lignes' => $nbLignes,
+                    'nb_resultats' => $nbResultats,
+                    'confirmation_code' => $confirmationCode,
+                ]),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
             DB::statement("
                 DELETE FROM public.pv_ligne_resultats r
                 WHERE r.pv_ligne_id IN (
@@ -299,10 +446,7 @@ class ParametresController extends Controller
                 )
             ", [$id]);
 
-            // 2) Supprimer les lignes du PV
             DB::table('pv_lignes')->where('proces_verbal_id', $id)->delete();
-
-            // 3) Supprimer le PV
             DB::table('proces_verbaux')->where('id', $id)->delete();
 
             DB::commit();
@@ -310,6 +454,12 @@ class ParametresController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'PV supprimé définitivement avec succès',
+                'deleted' => [
+                    'pv_id' => (int) $id,
+                    'code' => $pv->code,
+                    'nb_lignes' => $nbLignes,
+                    'nb_resultats' => $nbResultats,
+                ],
             ]);
 
         } catch (\Exception $e) {
@@ -346,7 +496,7 @@ class ParametresController extends Controller
     }
 
     /**
-     * ✅ AUTOCOMPLETE pour la recherche
+     * AUTOCOMPLETE pour la recherche
      */
     public function autocomplete(Request $request)
     {

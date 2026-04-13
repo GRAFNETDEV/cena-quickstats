@@ -191,6 +191,7 @@
                                 <th class="px-4 py-3 text-center text-xs font-bold uppercase">Éligibilité</th>
                                 <th class="px-4 py-3 text-right text-xs font-bold uppercase">% National</th>
                                 <th class="px-4 py-3 text-right text-xs font-bold uppercase bg-white/10">Sièges</th>
+                                <th class="px-4 py-3 text-right text-xs font-bold uppercase bg-white/10">Communes Maj.</th>
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-100">
@@ -227,6 +228,11 @@
                                             {{ (int)$row['sieges'] }} 🪑
                                         </span>
                                     </td>
+                                    <td class="px-4 py-3 text-right">
+                                        <span class="inline-flex items-center px-2 py-1 rounded-lg text-sm font-bold bg-blue-100 text-blue-800">
+                                            {{ (int)($row['communes_majoritaires'] ?? 0) }}
+                                        </span>
+                                    </td>
                                 </tr>
                             @endforeach
                         </tbody>
@@ -239,6 +245,8 @@
                                 <td class="px-4 py-3"></td>
                                 <td class="px-4 py-3 text-right text-benin-green-600">
                                     {{ array_sum(array_column($tableScope, 'sieges')) }} 🪑
+                                </td>
+                                <td class="px-4 py-3"></td>
                                 </td>
                             </tr>
                         </tfoot>
@@ -310,7 +318,7 @@
                                                                 @if(isset($methode['quotient_electoral']) && $methode['quotient_electoral'] > 0)
                                                                     <div class="mt-1 font-bold text-blue-800">
                                                                         QE: {{ number_format($methode['quotient_electoral'], 2, ',', ' ') }}
-                                                                        <span class="font-normal text-xs">(suffrages listes éligibles ≥10% / sièges à répartir)</span>
+                                                                        <span class="font-normal text-xs">(tous les suffrages exprimés / sièges à répartir)</span>
                                                                     </div>
                                                                 @endif
                                                             </div>

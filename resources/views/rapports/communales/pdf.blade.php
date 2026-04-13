@@ -294,12 +294,13 @@
 
     <table>
         <colgroup>
-            <col style="width: 34%;">
-            <col style="width: 14%;">
+            <col style="width: 30%;">
+            <col style="width: 13%;">
+            <col style="width: 11%;">
             <col style="width: 12%;">
-            <col style="width: 14%;">
+            <col style="width: 11%;">
+            <col style="width: 11%;">
             <col style="width: 12%;">
-            <col style="width: 14%;">
         </colgroup>
         <thead>
         <tr>
@@ -309,6 +310,7 @@
             <th class="text-center">Éligible</th>
             <th class="text-right">% Nat.</th>
             <th class="text-right">Sièges</th>
+            <th class="text-right">Com. Maj.</th>
         </tr>
         </thead>
         <tbody>
@@ -326,6 +328,7 @@
                 </td>
                 <td class="text-right">{{ number_format($row['pct_national'], 2, ',', '') }}%</td>
                 <td class="text-right highlight-green">{{ (int)$row['sieges'] }}</td>
+                <td class="text-right">{{ (int)($row['communes_majoritaires'] ?? 0) }}</td>
             </tr>
         @endforeach
         </tbody>
@@ -337,6 +340,7 @@
             <td></td>
             <td></td>
             <td class="text-right">{{ array_sum(array_column($tableScope, 'sieges')) }}</td>
+            <td></td>
         </tr>
         </tfoot>
     </table>
@@ -524,7 +528,7 @@
         • La répartition des sièges suit les Articles 183-187 de la loi électorale béninoise.<br>
         • Seuil d'éligibilité nationale : 10% des suffrages exprimés au plan national (Art.184).<br>
         • Les méthodes d'attribution (uninominal, majorité, proportionnelle) et quotients électoraux sont indiqués pour chaque arrondissement.<br>
-        • <strong>Quotient Électoral (QE)</strong> : Calculé en divisant le total des suffrages des listes éligibles (≥10% local) par le nombre de sièges à répartir (Slide 12).<br>
+        • <strong>Quotient Électoral (QE)</strong> : Calculé en divisant le total de tous les suffrages exprimés au niveau de l'arrondissement par le nombre de sièges à répartir.<br>
         • Date de génération : {{ date('d/m/Y à H:i:s') }}
     </p>
 </div>

@@ -1,11 +1,11 @@
 @extends('layouts.admin')
 
-@section('title', 'Résultats Électoraux')
+@section('title', 'Résultats Communales - Compilation')
 
 @section('breadcrumb')
     <span class="text-gray-400">Résultats</span>
     <i class="fas fa-chevron-right text-xs text-gray-400"></i>
-    <span class="text-gray-900 font-semibold">Compilation</span>
+    <span class="text-gray-900 font-semibold">Élections Communales</span>
 @endsection
 
 @section('content')
@@ -14,13 +14,13 @@
     <!-- En-tête -->
     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-            <h1 class="text-3xl font-bold text-gray-900">Résultats Électoraux</h1>
+            <h1 class="text-3xl font-bold text-gray-900">Résultats Élections Communales</h1>
             <p class="text-gray-600 mt-1">{{ $election->nom }}</p>
         </div>
 
         <div class="flex items-center gap-2">
             {{-- Sélecteur d'élection --}}
-            <form method="GET" action="{{ route('resultats') }}" class="inline-flex items-center gap-2">
+            <form method="GET" action="{{ route('rapports.communales') }}" class="inline-flex items-center gap-2">
                 <label class="text-sm font-medium text-gray-700">Élection</label>
                 <select name="election_id" 
                         onchange="this.form.submit()"
@@ -36,7 +36,7 @@
     </div>
 
     <!-- Info Seuils -->
-    <div class="bg-white rounded-xl shadow-sm p-4">
+    <div class="bg-white rounded-xl shadow-sm p-4 border-l-4 border-blue-500">
         <div class="flex items-center justify-between">
             <div>
                 <h3 class="text-sm font-semibold text-gray-700">Seuil d'éligibilité national</h3>
@@ -55,18 +55,125 @@
         </div>
     </div>
 
+    {{-- Section Exports Principaux --}}
+    <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl shadow-sm p-6 border border-blue-200">
+        <div class="flex items-center mb-4">
+            <svg class="w-6 h-6 text-blue-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            <h3 class="text-lg font-semibold text-gray-900">Exports Disponibles</h3>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {{-- Export Matrice --}}
+            <a href="{{ route('export.communales.matrice-csv', ['election_id' => $election->id]) }}" 
+               class="flex items-center justify-between p-4 bg-white rounded-lg border border-gray-200 hover:border-blue-400 hover:shadow-md transition-all group">
+                <div>
+                    <div class="font-semibold text-gray-900 group-hover:text-blue-600">Matrice Résultats</div>
+                    <div class="text-xs text-gray-500 mt-1">Voix par commune et parti</div>
+                </div>
+                <svg class="w-5 h-5 text-gray-400 group-hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+            </a>
+
+            {{-- Export Sièges --}}
+            <a href="{{ route('export.communales.sieges-csv', ['election_id' => $election->id]) }}" 
+               class="flex items-center justify-between p-4 bg-white rounded-lg border border-gray-200 hover:border-purple-400 hover:shadow-md transition-all group">
+                <div>
+                    <div class="font-semibold text-gray-900 group-hover:text-purple-600">Sièges par Parti</div>
+                    <div class="text-xs text-gray-500 mt-1">Répartition des sièges</div>
+                </div>
+                <svg class="w-5 h-5 text-gray-400 group-hover:text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+            </a>
+
+            {{-- Export Détails Communes --}}
+            <a href="{{ route('export.communales.details-csv', ['election_id' => $election->id]) }}" 
+               class="flex items-center justify-between p-4 bg-white rounded-lg border border-gray-200 hover:border-indigo-400 hover:shadow-md transition-all group">
+                <div>
+                    <div class="font-semibold text-gray-900 group-hover:text-indigo-600">Détails Communes</div>
+                    <div class="text-xs text-gray-500 mt-1">Résultats par arrondissement</div>
+                </div>
+                <svg class="w-5 h-5 text-gray-400 group-hover:text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+            </a>
+
+            {{-- Export Arrondissements avec Candidats --}}
+            <a href="{{ route('export.communales.arrondissements-csv', ['election_id' => $election->id]) }}" 
+               class="flex items-center justify-between p-4 bg-white rounded-lg border border-gray-200 hover:border-teal-400 hover:shadow-md transition-all group">
+                <div>
+                    <div class="font-semibold text-gray-900 group-hover:text-teal-600">Détails Arrondissements</div>
+                    <div class="text-xs text-gray-500 mt-1">Avec candidats élus</div>
+                </div>
+                <svg class="w-5 h-5 text-gray-400 group-hover:text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+                </svg>
+            </a>
+
+            {{-- ✅ NOUVEAU : Export Liste Élus Simple --}}
+            <a href="{{ route('export.communales.candidats-elus', ['election_id' => $election->id]) }}" 
+               class="flex items-center justify-between p-4 bg-white rounded-lg border-2 border-green-300 hover:border-green-500 hover:shadow-lg transition-all group">
+                <div>
+                    <div class="font-semibold text-gray-900 group-hover:text-green-600 flex items-center gap-2">
+                        <svg class="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z"/>
+                        </svg>
+                        Liste Élus (Simple)
+                    </div>
+                    <div class="text-xs text-gray-500 mt-1">Candidats par parti et localisation</div>
+                </div>
+                <svg class="w-5 h-5 text-green-400 group-hover:text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+            </a>
+
+            {{-- ✅ NOUVEAU : Export Liste Élus Détaillé --}}
+            <a href="{{ route('export.communales.candidats-elus-detailles', ['election_id' => $election->id]) }}" 
+               class="flex items-center justify-between p-4 bg-white rounded-lg border-2 border-blue-300 hover:border-blue-500 hover:shadow-lg transition-all group">
+                <div>
+                    <div class="font-semibold text-gray-900 group-hover:text-blue-600 flex items-center gap-2">
+                        <svg class="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-6-3a2 2 0 11-4 0 2 2 0 014 0zm-2 4a5 5 0 00-4.546 2.916A5.986 5.986 0 0010 16a5.986 5.986 0 004.546-2.084A5 5 0 0010 11z" clip-rule="evenodd"/>
+                        </svg>
+                        Liste Élus (Détaillé)
+                    </div>
+                    <div class="text-xs text-gray-500 mt-1">Avec quotient et mode attribution</div>
+                </div>
+                <svg class="w-5 h-5 text-blue-400 group-hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+            </a>
+        </div>
+
+        {{-- Info exports --}}
+        <div class="mt-4 bg-white bg-opacity-60 rounded-lg p-3 border border-blue-200">
+            <div class="flex items-start">
+                <svg class="w-5 h-5 text-blue-600 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <div class="text-xs text-gray-700">
+                    <p class="font-medium mb-1">Tous les exports sont au format CSV (compatible Excel)</p>
+                    <ul class="space-y-0.5 text-gray-600">
+                        <li>• <strong>Liste Élus Simple</strong> : Tous les candidats élus avec leur parti et localisation</li>
+                        <li>• <strong>Liste Élus Détaillé</strong> : Informations enrichies (quotient communal, mode d'attribution, statistiques)</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
     {{-- Matrice des résultats par commune --}}
     <div class="bg-white rounded-xl shadow-sm overflow-hidden">
-        <div class="p-6 border-b border-gray-200 flex items-center justify-between">
-            <div>
-                <h3 class="text-lg font-semibold text-gray-900">📊 Matrice des Résultats par Commune</h3>
-                <p class="text-sm text-gray-600 mt-1">Voix et pourcentages par commune et par entité politique</p>
+        <div class="p-6 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-gray-100">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900">📊 Matrice des Résultats par Commune</h3>
+                    <p class="text-sm text-gray-600 mt-1">Voix et pourcentages par commune et par entité politique</p>
+                </div>
             </div>
-            <a href="{{ route('resultats.export.matrice.csv', ['election_id' => $election->id]) }}" 
-               class="px-4 py-2 bg-benin-green-600 text-white rounded-lg hover:bg-benin-green-700 inline-flex items-center gap-2">
-                <i class="fas fa-file-csv"></i>
-                <span>Exporter CSV</span>
-            </a>
         </div>
 
         <div class="overflow-x-auto" style="max-height: 600px;">
@@ -146,7 +253,7 @@
     {{-- Boutons de compilation --}}
     <div class="flex justify-center gap-4">
         @if($compilation)
-            <form method="GET" action="{{ route('resultats') }}">
+            <form method="GET" action="{{ route('rapports.communales') }}">
                 @if(request('election_id'))
                     <input type="hidden" name="election_id" value="{{ request('election_id') }}">
                 @endif
@@ -157,7 +264,7 @@
                 </button>
             </form>
         @else
-            <form x-ref="compileForm" method="GET" action="{{ route('resultats') }}">
+            <form x-ref="compileForm" method="GET" action="{{ route('rapports.communales') }}">
                 @if(request('election_id'))
                     <input type="hidden" name="election_id" value="{{ request('election_id') }}">
                 @endif
@@ -189,7 +296,7 @@
             <div class="p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
                 <h3 class="text-xl font-bold text-gray-900">
                     <i class="fas fa-check-circle text-blue-600 mr-2"></i>
-                    Seuil d'éligibilité
+                    Étape 1 : Seuil d'éligibilité national
                 </h3>
                 <p class="text-sm text-gray-600 mt-1">Seuil : ≥ 10% des suffrages exprimés au plan national</p>
             </div>
@@ -239,14 +346,14 @@
             <div class="p-6 border-b border-gray-200 bg-gradient-to-r from-purple-50 to-pink-50">
                 <h3 class="text-xl font-bold text-gray-900">
                     <i class="fas fa-chair text-purple-600 mr-2"></i>
-                    Répartition des Sièges par Commune
+                    Étape 2 : Répartition des Sièges
                 </h3>
-                <p class="text-sm text-gray-600 mt-1">Quotient Électoral • Attribution au quotient • Plus fort reste</p>
+                <p class="text-sm text-gray-600 mt-1">Attribution selon les Articles 186-187 du Code Électoral</p>
             </div>
 
             {{-- Récapitulatif national --}}
             <div class="p-6 border-b border-gray-200">
-                <h4 class="font-bold text-lg text-gray-900 mb-4">📊 Récapitulatif National</h4>
+                <h4 class="font-bold text-lg text-gray-900 mb-4">📊 Récapitulatif National des Sièges</h4>
                 <div class="overflow-x-auto">
                     <table class="min-w-full divide-y divide-gray-200">
                         <thead class="bg-gray-50">
@@ -254,6 +361,7 @@
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Entité Politique</th>
                                 <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase bg-benin-green-50">Total Sièges</th>
                                 <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">% National</th>
+                                <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Communes Majoritaires</th>
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-200">
@@ -264,6 +372,7 @@
                                         $entite = collect($compilation['data']['entites'])->firstWhere('id', $entiteId);
                                         $totalGeneral += $sieges['sieges_total'];
                                         $pctNational = $compilation['data']['totaux_par_entite'][$entiteId]['pourcentage_national'];
+                                        $communesMajoritaires = $compilation['communes_majoritaires'][$entiteId] ?? 0;
                                     @endphp
                                     <tr class="hover:bg-gray-50">
                                         <td class="px-6 py-4 font-medium text-gray-900">
@@ -276,6 +385,11 @@
                                         <td class="px-6 py-4 text-center font-semibold text-gray-700">
                                             {{ number_format($pctNational, 2) }}%
                                         </td>
+                                        <td class="px-6 py-4 text-center">
+                                            <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-purple-100 text-purple-800">
+                                                {{ $communesMajoritaires }}
+                                            </span>
+                                        </td>
                                     </tr>
                                 @endif
                             @endforeach
@@ -285,66 +399,117 @@
                                 <td class="px-6 py-4 text-gray-900">TOTAL</td>
                                 <td class="px-6 py-4 text-center text-2xl text-benin-green-600 bg-benin-green-100">{{ $totalGeneral }}</td>
                                 <td class="px-6 py-4 text-center">100.00%</td>
+                                <td class="px-6 py-4 text-center">-</td>
                             </tr>
                         </tfoot>
                     </table>
                 </div>
-
-                <div class="mt-4 flex justify-center">
-                    <a href="{{ route('resultats.export.sieges.csv', ['election_id' => $election->id]) }}" 
-                       class="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
-                        <i class="fas fa-download mr-2"></i>
-                        Exporter les Sièges (CSV)
-                    </a>
-                </div>
             </div>
 
-            {{-- Détails par commune (échantillon des 10 premières) --}}
+            {{-- Détails par commune (échantillon) --}}
             <div class="p-6">
                 <div class="flex items-center justify-between mb-4">
-                    <h4 class="font-bold text-lg text-gray-900">🏘️ Détails par Commune (extrait)</h4>
-                    <a href="{{ route('resultats.export.details.csv', ['election_id' => $election->id]) }}" 
-                       class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 inline-flex items-center gap-2">
-                        <i class="fas fa-file-csv"></i>
-                        <span>Export Complet CSV</span>
-                    </a>
-                </div>
-                
-                <div class="text-sm text-gray-600 mb-4">
-                    <i class="fas fa-info-circle text-blue-500"></i>
-                    Affichage des 10 premières communes. Utilisez l'export CSV pour voir toutes les communes.
+                    <h4 class="font-bold text-lg text-gray-900">🏘️ Détails par Commune (10 premières)</h4>
+                    <div class="text-sm text-gray-600">
+                        <i class="fas fa-info-circle text-blue-500"></i>
+                        Consultez les exports CSV pour voir toutes les communes
+                    </div>
                 </div>
 
                 <div class="space-y-3">
                     @foreach(array_slice($compilation['repartition'], 0, 10, true) as $communeId => $rep)
                         @if($rep['nombre_sieges'] > 0)
-                        <div class="border rounded-lg p-3 bg-gray-50">
-                            <div class="flex items-center justify-between mb-2">
+                        <div class="border rounded-lg p-4 bg-gray-50 hover:bg-gray-100 transition-colors">
+                            <div class="flex items-center justify-between mb-3">
                                 <div>
-                                    <span class="font-semibold text-gray-900">{{ $rep['info']->nom }}</span>
-                                    <span class="text-sm text-gray-600 ml-2">• {{ $rep['nombre_sieges'] }} sièges</span>
+                                    <span class="font-semibold text-gray-900 text-lg">{{ $rep['info']->nom }}</span>
+                                    <span class="text-sm text-gray-600 ml-3">{{ $rep['info']->departement_nom }}</span>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                    <div class="text-right">
+                                        <div class="text-xs text-gray-500">Population</div>
+                                        <div class="font-semibold">{{ number_format($rep['population']) }}</div>
+                                    </div>
+                                    <div class="text-right">
+                                        <div class="text-xs text-gray-500">Sièges</div>
+                                        <div class="inline-flex items-center px-3 py-1 rounded-full text-sm font-bold bg-blue-100 text-blue-800">
+                                            {{ $rep['nombre_sieges'] }}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
-                            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                                @foreach($rep['details'] as $entiteId => $detail)
-                                    @if($detail['sieges_total'] > 0)
-                                        @php
-                                            $entite = collect($compilation['data']['entites'])->firstWhere('id', $entiteId);
-                                        @endphp
-                                        <div class="bg-white rounded p-2 border">
-                                            <div class="font-semibold text-gray-900">{{ $entite->sigle }}</div>
-                                            <div class="text-benin-green-600 font-bold">{{ $detail['sieges_total'] }} siège(s)</div>
+                            {{-- Arrondissements --}}
+                            @if(!empty($rep['repartition_arrondissements']))
+                                <div class="space-y-2">
+                                    @foreach($rep['repartition_arrondissements'] as $arrId => $arrData)
+                                        <div class="bg-white rounded-lg p-3 border border-gray-200">
+                                            <div class="flex items-center justify-between mb-2">
+                                                <span class="font-medium text-gray-800">{{ $arrData['arrondissement_nom'] }}</span>
+                                                <span class="text-xs text-gray-500">{{ $arrData['sieges_arrondissement'] }} sièges</span>
+                                            </div>
+                                            <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                                @foreach($arrData['listes'] as $entiteId => $liste)
+                                                    @if(($liste['sieges'] ?? 0) > 0)
+                                                        @php
+                                                            $entite = $entitesById[$entiteId] ?? null;
+                                                        @endphp
+                                                        @if($entite)
+                                                        <div class="bg-benin-green-50 rounded p-2 border border-benin-green-200">
+                                                            <div class="font-semibold text-sm text-benin-green-900">{{ $entite->sigle }}</div>
+                                                            <div class="text-benin-green-700 font-bold">{{ $liste['sieges'] }} siège(s)</div>
+                                                            <div class="text-xs text-gray-600">{{ number_format($liste['pourcentage'], 1) }}%</div>
+                                                        </div>
+                                                        @endif
+                                                    @endif
+                                                @endforeach
+                                            </div>
                                         </div>
-                                    @endif
-                                @endforeach
-                            </div>
+                                    @endforeach
+                                </div>
+                            @endif
                         </div>
                         @endif
                     @endforeach
                 </div>
             </div>
         </div>
+
+        {{-- Villages non saisis --}}
+        @if(!empty($villagesNonSaisis) && count($villagesNonSaisis) > 0)
+        <div class="bg-white rounded-xl shadow-sm overflow-hidden border-l-4 border-yellow-500">
+            <div class="p-6 border-b border-gray-200 bg-yellow-50">
+                <h3 class="text-xl font-bold text-gray-900">
+                    <i class="fas fa-exclamation-triangle text-yellow-600 mr-2"></i>
+                    Villages/Quartiers Non Saisis
+                </h3>
+                <p class="text-sm text-gray-600 mt-1">{{ count($villagesNonSaisis) }} villages/quartiers n'ont pas encore de PV validé</p>
+            </div>
+
+            <div class="p-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    @foreach(array_slice($villagesNonSaisis, 0, 15) as $village)
+                        <div class="flex items-start gap-2 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                            <i class="fas fa-map-marker-alt text-yellow-600 mt-1"></i>
+                            <div class="text-sm">
+                                <div class="font-medium text-gray-900">{{ $village->village_quartier_nom }}</div>
+                                <div class="text-xs text-gray-600">
+                                    {{ $village->arrondissement_nom }} • {{ $village->commune_nom }}
+                                </div>
+                            </div>
+                        </div>
+                    @endforeach
+                </div>
+
+                @if(count($villagesNonSaisis) > 15)
+                    <div class="mt-4 text-center text-sm text-gray-600">
+                        <i class="fas fa-info-circle text-blue-500"></i>
+                        Et {{ count($villagesNonSaisis) - 15 }} autres villages/quartiers non affichés
+                    </div>
+                @endif
+            </div>
+        </div>
+        @endif
     @endif
 
 </div>

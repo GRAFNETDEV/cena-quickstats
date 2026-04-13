@@ -6,6 +6,13 @@ use Illuminate\Support\Facades\DB;
 
 class StatsService
 {
+    /**
+     * Cache local pour éviter de relire le type d'élection à chaque sous-requête.
+     */
+    private array $includeDiasporaCache = [];
+    private array $presidentielleInscritsByCodeCache = [];
+    private array $presidentielleInscritsScopesCache = [];
+
     private function applyScope($q, array $scope)
     {
         foreach ($scope as $k => $v) {
@@ -18,6 +25,311 @@ class StatsService
     private function validPvStatuses(): array
     {
         return ['valide', 'publie'];
+    }
+
+    private function includeDiasporaForElection(int $electionId): bool
+    {
+        if (array_key_exists($electionId, $this->includeDiasporaCache)) {
+            return $this->includeDiasporaCache[$electionId];
+        }
+
+        $election = DB::table('elections as e')
+            ->leftJoin('types_election as te', 'te.id', '=', 'e.type_election_id')
+            ->where('e.id', $electionId)
+            ->select('e.type', 'te.code as type_ref')
+            ->first();
+
+        if (!$election) {
+            $this->includeDiasporaCache[$electionId] = false;
+            return false;
+        }
+
+        $type = strtolower(trim((string) ($election->type ?? '') . ' ' . (string) ($election->type_ref ?? '')));
+        $typeNormalise = strtr($type, [
+            'é' => 'e', 'è' => 'e', 'ê' => 'e', 'ë' => 'e',
+            'à' => 'a', 'â' => 'a',
+            'î' => 'i', 'ï' => 'i',
+            'ô' => 'o', 'ö' => 'o',
+            'ù' => 'u', 'û' => 'u', 'ü' => 'u',
+            'ç' => 'c',
+        ]);
+
+        $includeDiaspora = str_contains($typeNormalise, 'president');
+        $this->includeDiasporaCache[$electionId] = $includeDiaspora;
+
+        return $includeDiaspora;
+    }
+
+    private function normalizeCodePosteVote(?string $code): string
+    {
+        return strtoupper(trim((string) $code));
+    }
+
+    private function presidentielleInscritsFilePath(): ?string
+    {
+        $candidates = array_values(array_filter([
+            env('PRESIDENTIELLE_INSCRITS_XLSX_PATH'),
+            base_path('../election_presidentielle_inscrit.xlsx'),
+            dirname(base_path()) . DIRECTORY_SEPARATOR . 'election_presidentielle_inscrit.xlsx',
+            base_path('election_presidentielle_inscrit.xlsx'),
+            '/var/www/cena-shared/election_presidentielle_inscrit.xlsx',
+        ], static fn($path) => is_string($path) && trim($path) !== ''));
+
+        foreach ($candidates as $path) {
+            if (is_file($path) && is_readable($path)) {
+                return $path;
+            }
+        }
+
+        return null;
+    }
+
+    private function parsePresidentielleInscritsExcel(string $path): array
+    {
+        $zip = new \ZipArchive();
+        if ($zip->open($path) !== true) {
+            return [];
+        }
+
+        try {
+            $sheetXml = $zip->getFromName('xl/worksheets/sheet1.xml');
+            if ($sheetXml === false) {
+                return [];
+            }
+
+            $sharedStringsXml = $zip->getFromName('xl/sharedStrings.xml');
+            $sharedStrings = [];
+
+            if ($sharedStringsXml !== false) {
+                $sharedDom = new \DOMDocument();
+                if (@$sharedDom->loadXML($sharedStringsXml)) {
+                    $sharedXpath = new \DOMXPath($sharedDom);
+                    $sharedXpath->registerNamespace('x', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+
+                    foreach ($sharedXpath->query('//x:si') as $siNode) {
+                        $text = '';
+                        foreach ($sharedXpath->query('.//x:t', $siNode) as $tNode) {
+                            $text .= (string) $tNode->nodeValue;
+                        }
+                        $sharedStrings[] = $text;
+                    }
+                }
+            }
+
+            $sheetDom = new \DOMDocument();
+            if (!@$sheetDom->loadXML($sheetXml)) {
+                return [];
+            }
+
+            $xpath = new \DOMXPath($sheetDom);
+            $xpath->registerNamespace('x', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+
+            $inscritsByCode = [];
+
+            foreach ($xpath->query('//x:sheetData/x:row') as $rowNode) {
+                $rowRefNode = $rowNode->attributes->getNamedItem('r');
+                $rowIndex = (int) ($rowRefNode ? $rowRefNode->nodeValue : 0);
+                if ($rowIndex <= 1) {
+                    continue;
+                }
+
+                $code = '';
+                $total = 0;
+
+                foreach ($xpath->query('./x:c', $rowNode) as $cellNode) {
+                    $refNode = $cellNode->attributes->getNamedItem('r');
+                    $cellRef = (string) ($refNode ? $refNode->nodeValue : '');
+                    $column = preg_replace('/\d+/', '', $cellRef);
+                    if ($column !== 'F' && $column !== 'J') {
+                        continue;
+                    }
+
+                    $typeNode = $cellNode->attributes->getNamedItem('t');
+                    $cellType = (string) ($typeNode ? $typeNode->nodeValue : '');
+                    $value = '';
+
+                    if ($cellType === 's') {
+                        $valueNode = $xpath->query('./x:v', $cellNode)->item(0);
+                        $index = (int) ($valueNode ? $valueNode->nodeValue : -1);
+                        if ($index >= 0 && array_key_exists($index, $sharedStrings)) {
+                            $value = (string) $sharedStrings[$index];
+                        }
+                    } elseif ($cellType === 'inlineStr') {
+                        $inlineNode = $xpath->query('./x:is/x:t', $cellNode)->item(0);
+                        $value = (string) ($inlineNode ? $inlineNode->nodeValue : '');
+                    } else {
+                        $valueNode = $xpath->query('./x:v', $cellNode)->item(0);
+                        $value = (string) ($valueNode ? $valueNode->nodeValue : '');
+                    }
+
+                    if ($column === 'F') {
+                        $code = $this->normalizeCodePosteVote($value);
+                        continue;
+                    }
+
+                    $clean = preg_replace('/[^\d\-]/', '', (string) $value);
+                    $total = (int) ($clean === '' ? 0 : $clean);
+                }
+
+                if ($code !== '') {
+                    $inscritsByCode[$code] = $total;
+                }
+            }
+
+            return $inscritsByCode;
+        } finally {
+            $zip->close();
+        }
+    }
+
+    private function presidentielleInscritsByCode(int $electionId): ?array
+    {
+        if (array_key_exists($electionId, $this->presidentielleInscritsByCodeCache)) {
+            return $this->presidentielleInscritsByCodeCache[$electionId];
+        }
+
+        if (!$this->includeDiasporaForElection($electionId)) {
+            $this->presidentielleInscritsByCodeCache[$electionId] = null;
+            return null;
+        }
+
+        $path = $this->presidentielleInscritsFilePath();
+        if ($path === null) {
+            $this->presidentielleInscritsByCodeCache[$electionId] = null;
+            return null;
+        }
+
+        $inscritsByCode = $this->parsePresidentielleInscritsExcel($path);
+        if (empty($inscritsByCode)) {
+            $this->presidentielleInscritsByCodeCache[$electionId] = null;
+            return null;
+        }
+
+        $this->presidentielleInscritsByCodeCache[$electionId] = $inscritsByCode;
+        return $inscritsByCode;
+    }
+
+    private function sumInscritsFromReferenceRows(iterable $rows, array $referenceByCode): int
+    {
+        $total = 0;
+
+        foreach ($rows as $row) {
+            $code = $this->normalizeCodePosteVote($row->code ?? null);
+            $fallback = (int) ($row->electeurs_inscrits ?? 0);
+
+            if ($code !== '' && array_key_exists($code, $referenceByCode)) {
+                $total += (int) $referenceByCode[$code];
+            } else {
+                $total += $fallback;
+            }
+        }
+
+        return $total;
+    }
+
+    private function presidentielleInscritsParScope(int $electionId): ?array
+    {
+        if (array_key_exists($electionId, $this->presidentielleInscritsScopesCache)) {
+            return $this->presidentielleInscritsScopesCache[$electionId];
+        }
+
+        $referenceByCode = $this->presidentielleInscritsByCode($electionId);
+        if ($referenceByCode === null) {
+            $this->presidentielleInscritsScopesCache[$electionId] = null;
+            return null;
+        }
+
+        $rows = DB::table('postes_vote as pv')
+            ->join('villages_quartiers as vq', 'vq.id', '=', 'pv.village_quartier_id')
+            ->join('arrondissements as ar', 'ar.id', '=', 'vq.arrondissement_id')
+            ->join('communes as co', 'co.id', '=', 'ar.commune_id')
+            ->join('departements as de', 'de.id', '=', 'co.departement_id')
+            ->leftJoin('circonscriptions_electorales as ci', 'ci.id', '=', 'ar.circonscription_id')
+            ->where('pv.actif', true)
+            ->select([
+                'pv.code',
+                'pv.electeurs_inscrits',
+                'de.id as departement_id',
+                'co.id as commune_id',
+                'ci.id as circonscription_id',
+                'ar.id as arrondissement_id',
+                'vq.id as village_quartier_id',
+            ])
+            ->get();
+
+        $agg = [
+            'total' => 0,
+            'de.id' => [],
+            'co.id' => [],
+            'ci.id' => [],
+            'ar.id' => [],
+            'vq.id' => [],
+        ];
+
+        foreach ($rows as $row) {
+            $code = $this->normalizeCodePosteVote($row->code ?? null);
+            $fallback = (int) ($row->electeurs_inscrits ?? 0);
+            $inscrits = ($code !== '' && array_key_exists($code, $referenceByCode))
+                ? (int) $referenceByCode[$code]
+                : $fallback;
+
+            $agg['total'] += $inscrits;
+
+            foreach (['de.id' => 'departement_id', 'co.id' => 'commune_id', 'ci.id' => 'circonscription_id', 'ar.id' => 'arrondissement_id', 'vq.id' => 'village_quartier_id'] as $scopeKey => $field) {
+                $scopeValue = $row->{$field};
+                if ($scopeValue === null) {
+                    continue;
+                }
+
+                $scopeId = (int) $scopeValue;
+                if (!isset($agg[$scopeKey][$scopeId])) {
+                    $agg[$scopeKey][$scopeId] = 0;
+                }
+                $agg[$scopeKey][$scopeId] += $inscrits;
+            }
+        }
+
+        $this->presidentielleInscritsScopesCache[$electionId] = $agg;
+        return $agg;
+    }
+
+    private function inscritsCenaPresidentielle(int $electionId, array $scope = []): ?int
+    {
+        $aggregates = $this->presidentielleInscritsParScope($electionId);
+        if ($aggregates === null) {
+            return null;
+        }
+
+        if (empty($scope)) {
+            return (int) ($aggregates['total'] ?? 0);
+        }
+
+        if (count($scope) === 1) {
+            $scopeKey = array_key_first($scope);
+            $scopeValue = (int) ($scope[$scopeKey] ?? 0);
+
+            if (in_array($scopeKey, ['de.id', 'co.id', 'ci.id', 'ar.id', 'vq.id'], true)) {
+                return (int) ($aggregates[$scopeKey][$scopeValue] ?? 0);
+            }
+        }
+
+        $referenceByCode = $this->presidentielleInscritsByCode($electionId);
+        if ($referenceByCode === null) {
+            return null;
+        }
+
+        $q = DB::table('postes_vote as pv')
+            ->join('villages_quartiers as vq', 'vq.id', '=', 'pv.village_quartier_id')
+            ->join('arrondissements as ar', 'ar.id', '=', 'vq.arrondissement_id')
+            ->join('communes as co', 'co.id', '=', 'ar.commune_id')
+            ->join('departements as de', 'de.id', '=', 'co.departement_id')
+            ->leftJoin('circonscriptions_electorales as ci', 'ci.id', '=', 'ar.circonscription_id')
+            ->where('pv.actif', true);
+
+        $this->applyScope($q, $scope);
+
+        $rows = $q->select('pv.code', 'pv.electeurs_inscrits')->get();
+        return $this->sumInscritsFromReferenceRows($rows, $referenceByCode);
     }
 
     /**
@@ -46,21 +358,33 @@ class StatsService
      * ✅ circonscription au niveau arrondissement (ar.circonscription_id)
      * ✅ Exclure diaspora (circonscription ET département)
      */
-    private function inscritsCena(array $scope = []): int
+    private function inscritsCena(int $electionId, array $scope = []): int
     {
+        $includeDiaspora = $this->includeDiasporaForElection($electionId);
+
+        if ($includeDiaspora) {
+            $fromExcel = $this->inscritsCenaPresidentielle($electionId, $scope);
+            if ($fromExcel !== null) {
+                return $fromExcel;
+            }
+        }
+
         $q = DB::table('postes_vote as pv')
             ->join('villages_quartiers as vq', 'vq.id', '=', 'pv.village_quartier_id')
             ->join('arrondissements as ar', 'ar.id', '=', 'vq.arrondissement_id')
             ->join('communes as co', 'co.id', '=', 'ar.commune_id')
             ->join('departements as de', 'de.id', '=', 'co.departement_id')
             ->leftJoin('circonscriptions_electorales as ci', 'ci.id', '=', 'ar.circonscription_id')
+            ->where('pv.actif', true)
             ->selectRaw('COALESCE(SUM(pv.electeurs_inscrits), 0) as total');
 
-        // ✅ Exclure circonscription diaspora
-        $this->excludeDiasporaArr($q);
-        
-        // ✅ Exclure département diaspora
-        $this->excludeDiasporaDept($q);
+        if (!$includeDiaspora) {
+            // ✅ Exclure circonscription diaspora
+            $this->excludeDiasporaArr($q);
+
+            // ✅ Exclure département diaspora
+            $this->excludeDiasporaDept($q);
+        }
 
         $this->applyScope($q, $scope);
         return (int) $q->value('total');
@@ -74,6 +398,7 @@ class StatsService
      */
     private function dedupLignesArrondissement(int $electionId, array $scope = [])
     {
+        $includeDiaspora = $this->includeDiasporaForElection($electionId);
         $validStatuses = $this->validPvStatuses();
 
         $base = DB::table('proces_verbaux as pv')
@@ -88,11 +413,13 @@ class StatsService
             ->whereIn('pv.statut', $validStatuses)
             ->whereNotNull('pl.village_quartier_id');
 
-        // ✅ Exclure circonscription diaspora
-        $this->excludeDiasporaArr($base);
-        
-        // ✅ Exclure département diaspora
-        $this->excludeDiasporaDept($base);
+        if (!$includeDiaspora) {
+            // ✅ Exclure circonscription diaspora
+            $this->excludeDiasporaArr($base);
+
+            // ✅ Exclure département diaspora
+            $this->excludeDiasporaDept($base);
+        }
 
         // Scope autorisé (tes vues utilisent de.id/co.id/ci.id/ar.id/vq.id)
         $allowed = array_intersect_key($scope, array_flip(['de.id', 'co.id', 'ci.id', 'ar.id', 'vq.id']));
@@ -131,7 +458,7 @@ class StatsService
      */
     private function computeKpisFromLignes(int $electionId, array $scope = []): array
     {
-        $inscritsCena = $this->inscritsCena($scope);
+        $inscritsCena = $this->inscritsCena($electionId, $scope);
 
         $dedup = $this->dedupLignesArrondissement($electionId, $scope);
 
@@ -140,10 +467,22 @@ class StatsService
             ->groupBy('r.pv_ligne_id');
 
         // inscrits comptabilisés = postes_vote des villages présents dans dedup
-        $inscritsComp = (int) DB::query()->fromSub($dedup, 'd')
-            ->join('postes_vote as pv', 'pv.village_quartier_id', '=', 'd.village_quartier_id')
-            ->selectRaw('COALESCE(SUM(pv.electeurs_inscrits), 0) as total')
-            ->value('total');
+        $referenceByCode = $this->presidentielleInscritsByCode($electionId);
+        if ($referenceByCode !== null) {
+            $inscritsRows = DB::query()->fromSub($dedup, 'd')
+                ->join('postes_vote as pv', 'pv.village_quartier_id', '=', 'd.village_quartier_id')
+                ->where('pv.actif', true)
+                ->select('pv.code', 'pv.electeurs_inscrits')
+                ->get();
+
+            $inscritsComp = $this->sumInscritsFromReferenceRows($inscritsRows, $referenceByCode);
+        } else {
+            $inscritsComp = (int) DB::query()->fromSub($dedup, 'd')
+                ->join('postes_vote as pv', 'pv.village_quartier_id', '=', 'd.village_quartier_id')
+                ->where('pv.actif', true)
+                ->selectRaw('COALESCE(SUM(pv.electeurs_inscrits), 0) as total')
+                ->value('total');
+        }
 
         $agg = DB::query()->fromSub($dedup, 'd')
             ->leftJoinSub($voixSub, 'voix', 'voix.pv_ligne_id', '=', 'd.pv_ligne_id')
@@ -186,47 +525,50 @@ class StatsService
 
     public function national(int $electionId): array
     {
+        $includeDiaspora = $this->includeDiasporaForElection($electionId);
         $totaux = $this->computeKpis($electionId);
 
-        // Progression (PV) : on exclut diaspora aussi
-        $valides = (int) DB::table('proces_verbaux as pv')
+        $validesQ = DB::table('proces_verbaux as pv')
             ->join('arrondissements as ar', 'ar.id', '=', DB::raw('pv.niveau_id::int'))
             ->join('communes as co', 'co.id', '=', 'ar.commune_id')
             ->join('departements as de', 'de.id', '=', 'co.departement_id')
             ->where('pv.election_id', $electionId)
             ->where('pv.niveau', 'arrondissement')
-            ->whereIn('pv.statut', $this->validPvStatuses())
-            ->where(function ($q) {
+            ->whereIn('pv.statut', $this->validPvStatuses());
+        if (!$includeDiaspora) {
+            $validesQ->where(function ($q) {
                 $q->whereNull('ar.circonscription_id')->orWhere('ar.circonscription_id', '<>', 25);
-            })
-            ->where('de.id', '<>', 13) // ✅ Exclure département Diaspora
-            ->count();
+            })->where('de.id', '<>', 13);
+        }
+        $valides = (int) $validesQ->count();
 
-        $brouillons = (int) DB::table('proces_verbaux as pv')
+        $brouillonsQ = DB::table('proces_verbaux as pv')
             ->join('arrondissements as ar', 'ar.id', '=', DB::raw('pv.niveau_id::int'))
             ->join('communes as co', 'co.id', '=', 'ar.commune_id')
             ->join('departements as de', 'de.id', '=', 'co.departement_id')
             ->where('pv.election_id', $electionId)
             ->where('pv.niveau', 'arrondissement')
-            ->where('pv.statut', 'brouillon')
-            ->where(function ($q) {
+            ->where('pv.statut', 'brouillon');
+        if (!$includeDiaspora) {
+            $brouillonsQ->where(function ($q) {
                 $q->whereNull('ar.circonscription_id')->orWhere('ar.circonscription_id', '<>', 25);
-            })
-            ->where('de.id', '<>', 13) // ✅ Exclure département Diaspora
-            ->count();
+            })->where('de.id', '<>', 13);
+        }
+        $brouillons = (int) $brouillonsQ->count();
 
-        $litigieux = (int) DB::table('proces_verbaux as pv')
+        $litigieuxQ = DB::table('proces_verbaux as pv')
             ->join('arrondissements as ar', 'ar.id', '=', DB::raw('pv.niveau_id::int'))
             ->join('communes as co', 'co.id', '=', 'ar.commune_id')
             ->join('departements as de', 'de.id', '=', 'co.departement_id')
             ->where('pv.election_id', $electionId)
             ->where('pv.niveau', 'arrondissement')
-            ->where('pv.statut', 'litigieux')
-            ->where(function ($q) {
+            ->where('pv.statut', 'litigieux');
+        if (!$includeDiaspora) {
+            $litigieuxQ->where(function ($q) {
                 $q->whereNull('ar.circonscription_id')->orWhere('ar.circonscription_id', '<>', 25);
-            })
-            ->where('de.id', '<>', 13) // ✅ Exclure département Diaspora
-            ->count();
+            })->where('de.id', '<>', 13);
+        }
+        $litigieux = (int) $litigieuxQ->count();
 
         $progression = [
             'total' => $valides + $brouillons + $litigieux,
@@ -235,12 +577,13 @@ class StatsService
             'litigieux' => $litigieux,
         ];
 
-        // ✅ Exclure le département Diaspora de la liste
-        $depts = DB::table('departements')
+        $deptsQ = DB::table('departements')
             ->select('id', 'nom', 'code')
-            ->where('id', '<>', 13) // ✅ Exclure Diaspora
-            ->orderBy('nom')
-            ->get();
+            ->orderBy('nom');
+        if (!$includeDiaspora) {
+            $deptsQ->where('id', '<>', 13);
+        }
+        $depts = $deptsQ->get();
             
         $parDept = [];
         foreach ($depts as $d) {
@@ -272,8 +615,10 @@ class StatsService
 
     public function departement(int $electionId, int $departementId): array
     {
-        // ✅ Sécurité : si c'est le département Diaspora, retourner vide
-        if ($departementId === 13) {
+        $includeDiaspora = $this->includeDiasporaForElection($electionId);
+
+        // ✅ Sécurité : si c'est le département Diaspora, retourner vide uniquement hors présidentielle
+        if (!$includeDiaspora && $departementId === 13) {
             return [
                 'totaux' => [],
                 'par_commune' => [],
@@ -304,15 +649,17 @@ class StatsService
             ];
         }
 
-        // ✅ Circonscriptions du département via arrondissements (et exclure diaspora)
-        $circs = DB::table('circonscriptions_electorales as ci')
+        $circsQ = DB::table('circonscriptions_electorales as ci')
             ->join('arrondissements as ar', 'ar.circonscription_id', '=', 'ci.id')
             ->join('communes as co', 'co.id', '=', 'ar.commune_id')
             ->where('co.departement_id', $departementId)
-            ->where('ci.numero', '<=', 24)
             ->select('ci.id', 'ci.nom')
             ->distinct()
-            ->get();
+            ->orderBy('ci.nom');
+        if (!$includeDiaspora) {
+            $circsQ->where('ci.numero', '<=', 24);
+        }
+        $circs = $circsQ->get();
 
         $parCirconscription = [];
         foreach ($circs as $circ) {
@@ -334,8 +681,10 @@ class StatsService
 
     public function circonscription(int $electionId, int $circonscriptionId): array
     {
-        // ✅ sécurité diaspora
-        if ($circonscriptionId === 25) {
+        $includeDiaspora = $this->includeDiasporaForElection($electionId);
+
+        // ✅ sécurité diaspora hors présidentielle
+        if (!$includeDiaspora && $circonscriptionId === 25) {
             $circonscriptionId = 0;
         }
 
@@ -421,7 +770,7 @@ class StatsService
 
         $villages = [];
         foreach ($vqRows as $v) {
-            $ins = (int) $this->inscritsCena(['vq.id' => $v->id]);
+            $ins = (int) $this->inscritsCena($electionId, ['vq.id' => $v->id]);
             $k = $this->computeKpis($electionId, ['vq.id' => $v->id]);
 
             $villages[] = [
@@ -454,8 +803,9 @@ class StatsService
 
     public function village(int $electionId, int $villageQuartierId): array
     {
-        $ins = (int) $this->inscritsCena(['vq.id' => $villageQuartierId]);
+        $ins = (int) $this->inscritsCena($electionId, ['vq.id' => $villageQuartierId]);
         $k = $this->computeKpis($electionId, ['vq.id' => $villageQuartierId]);
+        $referenceByCode = $this->presidentielleInscritsByCode($electionId);
 
         $totaux = [
             'nombre_pv_valides' => $k['nombre_pv_valides'],
@@ -482,12 +832,17 @@ class StatsService
                 'cv.nom as centre_nom',
             ])
             ->get()
-            ->map(function ($p) {
+            ->map(function ($p) use ($referenceByCode) {
+                $code = $this->normalizeCodePosteVote($p->numero ?? null);
+                $inscrits = ($referenceByCode !== null && $code !== '' && array_key_exists($code, $referenceByCode))
+                    ? (int) $referenceByCode[$code]
+                    : (int) ($p->electeurs_inscrits ?? 0);
+
                 return [
                     'id' => $p->id,
                     'nom' => $p->nom,
                     'numero' => $p->numero,
-                    'electeurs_inscrits' => $p->electeurs_inscrits ?? 0,
+                    'electeurs_inscrits' => $inscrits,
                     'centre_nom' => $p->centre_nom ?? 'Centre N/A',
                     'votants' => 0,
                     'suffrages' => 0,

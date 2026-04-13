@@ -8,6 +8,7 @@ use App\Http\Controllers\ExportController;
 use App\Http\Controllers\ResultatsController;
 use App\Http\Controllers\ParametresController;
 use App\Http\Controllers\RapportCommunalesController;
+use App\Http\Controllers\RapportPresidentielleController;
 
 Route::get('/', function () {
     return redirect()->route('login');
@@ -69,6 +70,21 @@ Route::middleware(['auth'])->group(function () {
         ->name('export.village.csv');
     Route::get('/export/village/postes/csv', [ExportController::class, 'villagePostesCsv'])
         ->name('export.village.postes.csv');
+
+
+        /**
+ * ========================================
+ * EXPORTS CSV - CANDIDATS ÉLUS COMMUNALES
+ * ========================================
+ */
+
+// Export simple : Liste des candidats élus par parti avec localisation
+Route::get('/export/communales/candidats-elus', [ExportController::class, 'communalesCandidatsElusCsv'])
+    ->name('export.communales.candidats-elus');
+
+// Export détaillé : Liste des élus avec statistiques avancées
+Route::get('/export/communales/candidats-elus-detailles', [ExportController::class, 'communalesCandidatsElusDetaillesCsv'])
+    ->name('export.communales.candidats-elus-detailles');
 
     // ==========================================
     // NOUVEAUX EXPORTS VILLAGES (Vue Globale)
@@ -161,6 +177,12 @@ Route::prefix('rapports')->name('rapports.')->group(function () {
 
     Route::get('/communales/pdf', [RapportCommunalesController::class, 'pdf'])
         ->name('communales.pdf');
+
+    Route::get('/presidentielle', [RapportPresidentielleController::class, 'index'])
+        ->name('presidentielle');
+
+    Route::get('/presidentielle/pdf', [RapportPresidentielleController::class, 'pdf'])
+        ->name('presidentielle.pdf');
 });
 
 });

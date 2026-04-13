@@ -46,6 +46,42 @@ class StatsController extends Controller
         return $e;
     }
 
+    private function typeElection($election): string
+    {
+        $type = strtolower((string) ($election->type ?? ''));
+
+        if ($type === '' && !empty($election->type_election_id)) {
+            $typeRef = DB::table('types_election')
+                ->where('id', (int) $election->type_election_id)
+                ->value('code');
+            $type = strtolower((string) ($typeRef ?? ''));
+        }
+
+        $typeNormalise = strtr($type, [
+            'é' => 'e', 'è' => 'e', 'ê' => 'e', 'ë' => 'e',
+            'à' => 'a', 'â' => 'a',
+            'î' => 'i', 'ï' => 'i',
+            'ô' => 'o', 'ö' => 'o',
+            'ù' => 'u', 'û' => 'u', 'ü' => 'u',
+            'ç' => 'c',
+        ]);
+
+        if (str_contains($typeNormalise, 'president')) {
+            return 'presidentielle';
+        }
+
+        if (str_contains($typeNormalise, 'commun')) {
+            return 'communale';
+        }
+
+        return 'legislative';
+    }
+
+    private function includeDiaspora($election): bool
+    {
+        return $this->typeElection($election) === 'presidentielle';
+    }
+
     public function national(Request $request)
     {
         // ✅ Accepter election_id en paramètre GET
@@ -97,13 +133,15 @@ class StatsController extends Controller
 
         $election = $this->electionActive();
         abort_if(!$election, 404, "Aucune élection trouvée");
+        $includeDiaspora = $this->includeDiaspora($election);
 
-        // ✅ Exclure le département Diaspora (id = 13)
-        $departements = DB::table('departements')
+        $departementsQ = DB::table('departements')
             ->select('id', 'nom', 'code')
-            ->where('id', '<>', 13) // Exclure Diaspora
-            ->orderBy('nom')
-            ->get();
+            ->orderBy('nom');
+        if (!$includeDiaspora) {
+            $departementsQ->where('id', '<>', 13);
+        }
+        $departements = $departementsQ->get();
             
         $departementId = (int) ($request->get('departement_id') ?: ($departements->first()->id ?? 0));
 
@@ -142,8 +180,15 @@ class StatsController extends Controller
 
         $election = $this->electionActive();
         abort_if(!$election, 404, "Aucune élection trouvée");
+        $includeDiaspora = $this->includeDiaspora($election);
 
-        $circonscriptions = DB::table('circonscriptions_electorales')->select('id', 'nom', 'numero as numero_ordre')->where('numero', '<=', 24)->orderBy('nom')->get();
+        $circonscriptionsQ = DB::table('circonscriptions_electorales')
+            ->select('id', 'nom', 'numero as numero_ordre')
+            ->orderBy('nom');
+        if (!$includeDiaspora) {
+            $circonscriptionsQ->where('numero', '<=', 24);
+        }
+        $circonscriptions = $circonscriptionsQ->get();
         $circonscriptionId = (int) ($request->get('circonscription_id') ?: ($circonscriptions->first()->id ?? 0));
 
         if ($circonscriptionId) {
@@ -253,23 +298,28 @@ class StatsController extends Controller
 
         $election = $this->electionActive();
         abort_if(!$election, 404, "Aucune élection trouvée");
+        $includeDiaspora = $this->includeDiaspora($election);
 
         // ========================================
         // STATISTIQUES GLOBALES
         // ========================================
         
-        // 1️⃣ Nombre de villages inscrits (hors diaspora)
-        $nombreVillagesInscrits = DB::table('villages_quartiers as vq')
+        // 1️⃣ Nombre de villages inscrits
+        $villagesInscritsQ = DB::table('villages_quartiers as vq')
             ->join('arrondissements as a', 'a.id', '=', 'vq.arrondissement_id')
             ->join('communes as com', 'com.id', '=', 'a.commune_id')
-            ->join('departements as dep', 'dep.id', '=', 'com.departement_id')
-            ->where('dep.nom', 'NOT ILIKE', '%diaspora%')
-            ->where('com.nom', 'NOT ILIKE', '%diaspora%')
-            ->where('a.nom', 'NOT ILIKE', '%diaspora%')
-            ->where('vq.nom', 'NOT ILIKE', '%diaspora%')
-            ->count();
+            ->join('departements as dep', 'dep.id', '=', 'com.departement_id');
+        if (!$includeDiaspora) {
+            $villagesInscritsQ
+                ->where('dep.nom', 'NOT ILIKE', '%diaspora%')
+                ->where('com.nom', 'NOT ILIKE', '%diaspora%')
+                ->where('a.nom', 'NOT ILIKE', '%diaspora%')
+                ->where('vq.nom', 'NOT ILIKE', '%diaspora%');
+        }
+        $nombreVillagesInscrits = $villagesInscritsQ->count();
 
         // 2️⃣ Nombre de villages saisis dans les PV (même logique que le listing)
+        $filtreDiasporaLignes = $includeDiaspora ? "" : "AND dep.id <> 13";
         $nombreVillagesSaisis = DB::select("
             WITH lignes_avec_pv AS (
                 SELECT
@@ -281,10 +331,15 @@ class StatsController extends Controller
                     pl.created_at AS ligne_created_at
                 FROM public.proces_verbaux pv
                 JOIN public.pv_lignes pl ON pl.proces_verbal_id = pv.id
+                JOIN public.villages_quartiers vq ON vq.id = pl.village_quartier_id
+                JOIN public.arrondissements a ON a.id = vq.arrondissement_id
+                JOIN public.communes com ON com.id = a.commune_id
+                JOIN public.departements dep ON dep.id = com.departement_id
                 WHERE pv.niveau = 'arrondissement'
                     AND pv.statut IN ('valide','publie')
                     AND pv.election_id = ?
                     AND pl.village_quartier_id IS NOT NULL
+                    {$filtreDiasporaLignes}
             ),
             dedup_lignes AS (
                 SELECT
@@ -307,6 +362,7 @@ class StatsController extends Controller
         // ========================================
         // LISTE COMPLÈTE DES VILLAGES AVEC VOIX
         // ========================================
+        $filtreDiasporaResultats = $includeDiaspora ? "" : "WHERE departement_id <> 13";
         
         $villagesAvecVoix = DB::select("
             WITH lignes_avec_pv AS (
@@ -408,6 +464,7 @@ class StatsController extends Controller
                 UNION ALL
                 SELECT * FROM ligne_bulletins_nuls
             ) x
+            {$filtreDiasporaResultats}
             ORDER BY
                 departement_nom, commune_nom, arrondissement_nom, village_quartier_nom,
                 ordre_ligne ASC,
@@ -419,6 +476,13 @@ class StatsController extends Controller
         // VILLAGES NON SAISIS
         // ========================================
         
+        $filtreDiasporaReferentiel = $includeDiaspora
+            ? "1=1"
+            : "dep.nom NOT ILIKE '%diaspora%'
+                    AND com.nom NOT ILIKE '%diaspora%'
+                    AND a.nom NOT ILIKE '%diaspora%'
+                    AND vq.nom NOT ILIKE '%diaspora%'";
+
         $villagesNonSaisis = DB::select("
             WITH lignes_avec_pv AS (
                 SELECT
@@ -464,10 +528,7 @@ class StatsController extends Controller
                 JOIN public.communes com ON com.id = a.commune_id
                 JOIN public.departements dep ON dep.id = com.departement_id
                 WHERE
-                    dep.nom NOT ILIKE '%diaspora%'
-                    AND com.nom NOT ILIKE '%diaspora%'
-                    AND a.nom NOT ILIKE '%diaspora%'
-                    AND vq.nom NOT ILIKE '%diaspora%'
+                    {$filtreDiasporaReferentiel}
             )
             SELECT
                 r.departement_id, r.departement_nom,
@@ -523,6 +584,7 @@ class StatsController extends Controller
             'election' => $election,
             'stats' => [
                 'election' => $election,
+                'diaspora_incluse' => $includeDiaspora,
                 'nombre_villages_inscrits' => $nombreVillagesInscrits,
                 'nombre_villages_saisis' => $nombreVillagesSaisis,
                 'villages_avec_voix' => array_values($villagesGroupes),

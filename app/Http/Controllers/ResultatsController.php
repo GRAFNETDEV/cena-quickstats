@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Services\ResultatsService;
 use App\Services\ResultatsCommunalesService;
+use App\Services\ResultatsPresidentielleService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
@@ -12,13 +13,47 @@ class ResultatsController extends Controller
 {
     private ResultatsService $resultatsService;
     private ResultatsCommunalesService $resultatsCommunalesService;
+    private ResultatsPresidentielleService $resultatsPresidentielleService;
 
     public function __construct(
         ResultatsService $resultatsService,
-        ResultatsCommunalesService $resultatsCommunalesService
+        ResultatsCommunalesService $resultatsCommunalesService,
+        ResultatsPresidentielleService $resultatsPresidentielleService
     ) {
         $this->resultatsService = $resultatsService;
         $this->resultatsCommunalesService = $resultatsCommunalesService;
+        $this->resultatsPresidentielleService = $resultatsPresidentielleService;
+    }
+
+    private function typeElection($election): string
+    {
+        $type = strtolower((string) ($election->type ?? ''));
+
+        if ($type === '' && !empty($election->type_election_id)) {
+            $typeRef = DB::table('types_election')
+                ->where('id', (int) $election->type_election_id)
+                ->value('code');
+            $type = strtolower((string) ($typeRef ?? ''));
+        }
+
+        $typeNormalise = strtr($type, [
+            'é' => 'e', 'è' => 'e', 'ê' => 'e', 'ë' => 'e',
+            'à' => 'a', 'â' => 'a',
+            'î' => 'i', 'ï' => 'i',
+            'ô' => 'o', 'ö' => 'o',
+            'ù' => 'u', 'û' => 'u', 'ü' => 'u',
+            'ç' => 'c',
+        ]);
+
+        if (str_contains($typeNormalise, 'commun')) {
+            return 'communale';
+        }
+
+        if (str_contains($typeNormalise, 'president')) {
+            return 'presidentielle';
+        }
+
+        return 'legislative';
     }
 
     /**
@@ -54,7 +89,7 @@ class ResultatsController extends Controller
     }
 
     /**
-     * ✅ Page principale des résultats
+     * Page principale des résultats
      * Route UNIQUE qui détecte le type d'élection et affiche la bonne vue
      */
     public function index(Request $request)
@@ -70,24 +105,28 @@ class ResultatsController extends Controller
             return redirect()->route('dashboard')->with('error', 'Aucune élection trouvée');
         }
 
-        // ✅ DÉTECTION DU TYPE D'ÉLECTION
-        $typeElection = strtolower($election->type ?? 'legislative');
+        // DÉTECTION DU TYPE D'ÉLECTION
+        $typeElection = $this->typeElection($election);
 
         // Liste de toutes les élections pour le sélecteur
         $elections = DB::table('elections')
             ->orderBy('date_scrutin', 'desc')
             ->get();
 
-        // ✅ ROUTER VERS LE BON SERVICE SELON LE TYPE
+        // ROUTER VERS LE BON SERVICE SELON LE TYPE
         if ($typeElection === 'communale') {
             return $this->indexCommunales($request, $election, $elections);
-        } else {
-            return $this->indexLegislatives($request, $election, $elections);
         }
+
+        if ($typeElection === 'presidentielle') {
+            return $this->indexPresidentielle($request, $election, $elections);
+        }
+
+        return $this->indexLegislatives($request, $election, $elections);
     }
 
     /**
-     * ✅ Résultats pour élections LÉGISLATIVES (par circonscription)
+     * Résultats pour élections LÉGISLATIVES (par circonscription)
      */
     private function indexLegislatives(Request $request, $election, $elections)
     {
@@ -113,7 +152,7 @@ class ResultatsController extends Controller
     }
 
     /**
-     * ✅ Résultats pour élections COMMUNALES (par commune)
+     * Résultats pour élections COMMUNALES (par commune)
      */
     private function indexCommunales(Request $request, $election, $elections)
     {
@@ -139,6 +178,30 @@ class ResultatsController extends Controller
     }
 
     /**
+     * Résultats pour élections présidentielles (niveau national/département).
+     */
+    private function indexPresidentielle(Request $request, $election, $elections)
+    {
+        $data = $this->resultatsPresidentielleService->getResultatsParDepartement($election->id);
+
+        $compilation = null;
+        if ($request->has('compiler') || $request->get('compiler') === '1') {
+            $cacheKey = "compilation_presidentielle_{$election->id}";
+            $compilation = Cache::remember($cacheKey, 300, function () use ($election) {
+                return $this->resultatsPresidentielleService->compilerResultats($election->id);
+            });
+        }
+
+        return view('resultats.presidentielle', [
+            'election' => $election,
+            'elections' => $elections,
+            'data' => $data,
+            'compilation' => $compilation,
+            'type' => 'presidentielle',
+        ]);
+    }
+
+    /**
      * Vérifier l'éligibilité (AJAX) - Détecte automatiquement le type
      */
     public function verifierEligibilite(Request $request)
@@ -149,10 +212,12 @@ class ResultatsController extends Controller
         }
 
         try {
-            $typeElection = strtolower($election->type ?? 'legislative');
+            $typeElection = $this->typeElection($election);
             
             if ($typeElection === 'communale') {
                 $result = $this->resultatsCommunalesService->verifierEligibiliteNationale($election->id);
+            } elseif ($typeElection === 'presidentielle') {
+                $result = $this->resultatsPresidentielleService->verifierEligibilite($election->id);
             } else {
                 $result = $this->resultatsService->verifierEligibilite($election->id);
             }
@@ -177,11 +242,14 @@ class ResultatsController extends Controller
         }
 
         try {
-            $typeElection = strtolower($election->type ?? 'legislative');
+            $typeElection = $this->typeElection($election);
             
             if ($typeElection === 'communale') {
                 $result = $this->resultatsCommunalesService->repartirSieges($election->id);
                 Cache::forget("compilation_communales_{$election->id}");
+            } elseif ($typeElection === 'presidentielle') {
+                $result = $this->resultatsPresidentielleService->compilerResultats($election->id);
+                Cache::forget("compilation_presidentielle_{$election->id}");
             } else {
                 $result = $this->resultatsService->repartirSieges($election->id);
                 Cache::forget("compilation_resultats_{$election->id}");
@@ -208,12 +276,15 @@ class ResultatsController extends Controller
             abort(404, 'Élection introuvable');
         }
 
-        $typeElection = strtolower($election->type ?? 'legislative');
+        $typeElection = $this->typeElection($election);
         
         try {
             if ($typeElection === 'communale') {
                 $csv = $this->resultatsCommunalesService->exporterResultatsCSV($electionId);
                 $filename = 'matrice_communales_' . date('Y-m-d_His') . '.csv';
+            } elseif ($typeElection === 'presidentielle') {
+                $csv = $this->resultatsPresidentielleService->exporterMatriceCSV($electionId);
+                $filename = 'matrice_presidentielles_' . date('Y-m-d_His') . '.csv';
             } else {
                 $csv = $this->resultatsService->exporterResultatsCSV($electionId);
                 $filename = 'matrice_legislatives_' . date('Y-m-d_His') . '.csv';
@@ -240,12 +311,15 @@ class ResultatsController extends Controller
             abort(404, 'Élection introuvable');
         }
 
-        $typeElection = strtolower($election->type ?? 'legislative');
+        $typeElection = $this->typeElection($election);
         
         try {
             if ($typeElection === 'communale') {
                 $csv = $this->resultatsCommunalesService->exporterSiegesCSV($electionId);
                 $filename = 'sieges_communales_' . date('Y-m-d_His') . '.csv';
+            } elseif ($typeElection === 'presidentielle') {
+                $csv = $this->resultatsPresidentielleService->exporterClassementCSV($electionId);
+                $filename = 'classement_presidentielles_' . date('Y-m-d_His') . '.csv';
             } else {
                 $csv = $this->resultatsService->exporterSiegesCSV($electionId);
                 $filename = 'sieges_legislatives_' . date('Y-m-d_His') . '.csv';
@@ -272,12 +346,15 @@ class ResultatsController extends Controller
             abort(404, 'Élection introuvable');
         }
 
-        $typeElection = strtolower($election->type ?? 'legislative');
+        $typeElection = $this->typeElection($election);
         
         try {
             if ($typeElection === 'communale') {
                 $csv = $this->resultatsCommunalesService->exporterDetailsParCommune($electionId);
                 $filename = 'details_communes_' . date('Y-m-d_His') . '.csv';
+            } elseif ($typeElection === 'presidentielle') {
+                $csv = $this->resultatsPresidentielleService->exporterDetailsCSV($electionId);
+                $filename = 'details_presidentielles_' . date('Y-m-d_His') . '.csv';
             } else {
                 $compilation = Cache::remember(
                     "compilation_sieges_{$electionId}",
@@ -309,7 +386,7 @@ class ResultatsController extends Controller
             abort(404, 'Élection introuvable');
         }
 
-        $typeElection = strtolower($election->type ?? 'legislative');
+        $typeElection = $this->typeElection($election);
         
         if ($typeElection !== 'communale') {
             return back()->with('error', 'Cet export n\'est disponible que pour les élections communales');
@@ -339,10 +416,12 @@ class ResultatsController extends Controller
         }
 
         try {
-            $typeElection = strtolower($election->type ?? 'legislative');
+            $typeElection = $this->typeElection($election);
             
             if ($typeElection === 'communale') {
                 $resume = $this->resultatsCommunalesService->getResume($election->id);
+            } elseif ($typeElection === 'presidentielle') {
+                $resume = $this->resultatsPresidentielleService->getResume($election->id);
             } else {
                 $resume = $this->resultatsService->getResume($election->id);
             }
@@ -375,10 +454,12 @@ class ResultatsController extends Controller
             return redirect()->back()->with('error', 'Aucune élection trouvée');
         }
 
-        $typeElection = strtolower($election->type ?? 'legislative');
+        $typeElection = $this->typeElection($election);
         
         if ($typeElection === 'communale') {
             Cache::forget("compilation_communales_{$election->id}");
+        } elseif ($typeElection === 'presidentielle') {
+            Cache::forget("compilation_presidentielle_{$election->id}");
         } else {
             Cache::forget("compilation_resultats_{$election->id}");
         }
@@ -442,3 +523,4 @@ class ResultatsController extends Controller
         return $csv;
     }
 }
+

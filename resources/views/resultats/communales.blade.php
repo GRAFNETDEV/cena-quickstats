@@ -260,6 +260,7 @@
                             <tr>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Entité Politique</th>
                                 <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase bg-benin-green-50">Total Sièges</th>
+                                <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase bg-blue-50">Communes Maj.</th>
                                 <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">% National</th>
                             </tr>
                         </thead>
@@ -271,6 +272,7 @@
                                         $entite = collect($compilation['data']['entites'])->firstWhere('id', $entiteId);
                                         $totalGeneral += $sieges['sieges_total'];
                                         $pctNational = $compilation['data']['totaux_par_entite'][$entiteId]['pourcentage_national'] ?? 0;
+                                        $communesMaj = $compilation['communes_majoritaires'][$entiteId] ?? 0;
                                     @endphp
                                     <tr class="hover:bg-gray-50">
                                         <td class="px-6 py-4 font-medium text-gray-900">
@@ -279,6 +281,9 @@
                                         </td>
                                         <td class="px-6 py-4 text-center text-2xl font-bold text-benin-green-600 bg-benin-green-50">
                                             {{ $sieges['sieges_total'] }}
+                                        </td>
+                                        <td class="px-6 py-4 text-center text-lg font-bold text-blue-600 bg-blue-50">
+                                            {{ $communesMaj }}
                                         </td>
                                         <td class="px-6 py-4 text-center font-semibold text-gray-700">
                                             {{ number_format($pctNational, 2) }}%
@@ -291,6 +296,7 @@
                             <tr>
                                 <td class="px-6 py-4 text-gray-900">TOTAL</td>
                                 <td class="px-6 py-4 text-center text-2xl text-benin-green-600 bg-benin-green-100">{{ $totalGeneral }}</td>
+                                <td class="px-6 py-4 text-center bg-blue-100">—</td>
                                 <td class="px-6 py-4 text-center">100.00%</td>
                             </tr>
                         </tfoot>
@@ -426,7 +432,7 @@
                                                                                 {{ number_format($methode['quotient_electoral'], 2) }}
                                                                             </span>
                                                                             <span class="text-xs text-gray-500">
-                                                                                (suffrages listes éligibles ≥10% / 
+                                                                                (tous les suffrages exprimés / 
                                                                                 @if(isset($methode['sieges_restants']))
                                                                                     {{ $methode['sieges_restants'] }} sièges restants)
                                                                                 @else
