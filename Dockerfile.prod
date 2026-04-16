@@ -1,0 +1,76 @@
+FROM php:8.2-fpm
+
+# Dépendances système (Ajout de gnupg pour Node)
+RUN apt-get update && apt-get install -y \
+    nginx \
+    supervisor \
+    git \
+    curl \
+    unzip \
+    zip \
+    libpng-dev \
+    libonig-dev \
+    libxml2-dev \
+    libpq-dev \
+    libzip-dev \
+    libicu-dev \
+    libjpeg62-turbo-dev \
+    libfreetype6-dev \
+    procps \
+    netcat-openbsd \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Extensions PHP
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install pdo pdo_pgsql pgsql mbstring exif pcntl bcmath gd zip intl
+
+# Composer
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+# Répertoire de travail
+WORKDIR /var/www/cena-quickstats
+
+# Copier d'abord les manifests (Cache Docker)
+COPY composer.json composer.lock package.json package-lock.json* ./
+
+# Installer dépendances PHP prod (sans autoload immédiat)
+RUN composer install --no-dev --no-interaction --no-scripts --no-autoloader
+
+# Installer les dépendances JS
+RUN npm ci || npm install
+
+# Copier le reste du projet
+COPY . .
+
+# Générer autoload optimisé et Builder les assets
+RUN composer dump-autoload --optimize \
+    && npm run build \
+    && rm -rf node_modules # <-- Alléger l'image !
+
+# Créer dossiers nécessaires
+RUN mkdir -p \
+    /var/www/cena-quickstats/storage \
+    /var/www/cena-quickstats/bootstrap/cache \
+    /var/log/supervisor \
+    /run/php \
+    /run/nginx
+
+# Permissions
+RUN chown -R www-data:www-data /var/www/cena-quickstats \
+    && chmod -R 775 /var/www/cena-quickstats/storage /var/www/cena-quickstats/bootstrap/cache
+
+# Configs
+COPY docker/nginx.conf /etc/nginx/sites-available/default
+COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Script d'entrée
+COPY docker/entrypoint.sh /usr/local/bin/quickstats-entrypoint.sh
+RUN chmod +x /usr/local/bin/quickstats-entrypoint.sh
+
+EXPOSE 8000
+
+ENTRYPOINT ["/usr/local/bin/quickstats-entrypoint.sh"]
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
